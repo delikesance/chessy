@@ -191,6 +191,11 @@ export function Game({ view }: { view: StateView }) {
         <div className="gm-top-mid">
           <span className="tag">{isBot ? "Entraînement" : view.rated ? "Classée" : "Amicale"}</span>
           <span className="mono muted">Demi-coup {view.ply}</span>
+          {(view.spectators ?? 0) > 0 && (
+            <span className="muted" aria-live="polite">
+              {view.spectators} spectateur{view.spectators! > 1 ? "s" : ""}
+            </span>
+          )}
         </div>
         <span className="gm-you muted">
           Vous jouez les {view.you === "white" ? "blancs" : "noirs"}
@@ -265,6 +270,7 @@ export function Game({ view }: { view: StateView }) {
                   solo={isBot}
                   elo={over?.elo ?? null}
                   rematch={rematch}
+                  gameId={view.game_id}
                   onHide={() => setResultHidden(true)}
                 />
               )}

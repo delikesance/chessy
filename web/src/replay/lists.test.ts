@@ -10,6 +10,9 @@ import {
   liveTag,
   matchesFilter,
   mergePage,
+  neutralReason,
+  outcomeWinner,
+  resultLine,
   opponentLabel,
   plyText,
   showsDelta,
@@ -124,5 +127,22 @@ describe("En direct", () => {
     expect(delayText(180_000)).toBe("Retransmission différée de 3 min");
     expect(winnerText("white")).toBe("Victoire des blancs");
     expect(winnerText(null)).toBe("Partie nulle");
+  });
+});
+
+describe("résultat neutre", () => {
+  it("annonce le vainqueur et le motif", () => {
+    expect(resultLine({ type: "resignation", winner: "black" }, "resignation")).toBe("Victoire des noirs · Abandon");
+    expect(resultLine({ type: "stalemate" }, "stalemate")).toBe("Partie nulle · Pat");
+    expect(resultLine({ type: "checkmate", winner: "white" }, "")).toBe("Victoire des blancs · Échec et mat");
+    expect(resultLine({ type: "ongoing" }, "")).toBe("");
+  });
+
+  it("trouve le vainqueur", () => {
+    expect(outcomeWinner({ type: "timeout", winner: "white" })).toBe("white");
+    expect(outcomeWinner({ type: "repetition" })).toBeNull();
+    expect(outcomeWinner({ type: "ongoing" })).toBeUndefined();
+    expect(neutralReason("agreed_draw")).toBe("Nulle par accord");
+    expect(neutralReason("inconnu")).toBe("inconnu");
   });
 });

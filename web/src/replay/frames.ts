@@ -8,11 +8,13 @@ import type {
   GameKind,
   GameRecord,
   OpponentInfo,
+  Outcome,
   Seat,
   SkillSlot,
   SpectatorView,
   StateView,
 } from "../protocol";
+import { resultFor } from "../outcome";
 
 export const opposite = (c: Color): Color => (c === "white" ? "black" : "white");
 
@@ -42,6 +44,13 @@ export function defaultOrientation(game: { white: Seat; black: Seat }, username:
   if (mine) return mine;
   if (game.white.bot && !game.black.bot) return "black";
   return "white";
+}
+
+/** Son de fin de partie pour `me` : victoire, défaite ou nulle ; `null` si la partie n'est pas finie. */
+export function endSound(outcome: Outcome, me: Color): "game_win" | "game_lose" | "game_draw" | null {
+  const result = resultFor(outcome, me);
+  if (result === null) return null;
+  return result === "win" ? "game_win" : result === "loss" ? "game_lose" : "game_draw";
 }
 
 /** Une partie enregistrée est rejouable si elle contient au moins sa position initiale. */

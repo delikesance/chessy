@@ -3,6 +3,7 @@ import { actionKey } from "../game/logic";
 import {
   colorOf,
   defaultOrientation,
+  endSound,
   exploreViews,
   frameToView,
   isReplayable,
@@ -119,6 +120,15 @@ describe("spectatorToView", () => {
     expect(sv.events).toEqual([]);
     expect(sv.spectators).toBe(0);
     expect(sv.delay_ms).toBe(0);
+  });
+});
+
+describe("son de fin de partie", () => {
+  it("choisit le son selon le résultat du point de vue de l'observateur", () => {
+    expect(endSound({ type: "checkmate", winner: "white" }, "white")).toBe("game_win");
+    expect(endSound({ type: "checkmate", winner: "white" }, "black")).toBe("game_lose");
+    expect(endSound({ type: "stalemate" }, "white")).toBe("game_draw");
+    expect(endSound({ type: "ongoing" }, "white")).toBeNull();
   });
 });
 

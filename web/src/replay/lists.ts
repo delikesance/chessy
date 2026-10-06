@@ -1,6 +1,6 @@
 // Logique pure des listes : « Mes parties » (pagination, filtre) et « En direct » (tri, étiquettes).
 
-import type { Color, GameSummary, LiveGame, Seat } from "../protocol";
+import type { Color, GameSummary, LiveGame, Outcome, Seat } from "../protocol";
 import { kindLabel, opposite, seatName } from "./frames";
 
 // ---- Mes parties -------------------------------------------------------------
@@ -126,4 +126,35 @@ export function delayText(delayMs: number): string | null {
 export function winnerText(winner: Color | null): string {
   if (winner === null) return "Partie nulle";
   return winner === "white" ? "Victoire des blancs" : "Victoire des noirs";
+}
+
+const NEUTRAL_REASON: Record<string, string> = {
+  checkmate: "Échec et mat",
+  resignation: "Abandon",
+  timeout: "Temps écoulé",
+  agreed_draw: "Nulle par accord",
+  draw_agreed: "Nulle par accord",
+  stalemate: "Pat",
+  fifty_moves: "Règle des 50 coups",
+  repetition: "Répétition de position",
+  insufficient_material: "Matériel insuffisant",
+  disconnect: "Déconnexion",
+};
+
+/** Motif de fin sans point de vue (« Abandon », « Échec et mat »). */
+export function neutralReason(reason: string): string {
+  return NEUTRAL_REASON[reason] ?? reason;
+}
+
+/** Vainqueur d'une issue : un camp, `null` pour une nulle, `undefined` si la partie continue. */
+export function outcomeWinner(outcome: Outcome): Color | null | undefined {
+  if (outcome.type === "ongoing") return undefined;
+  return "winner" in outcome ? outcome.winner : null;
+}
+
+/** « Victoire des noirs · Abandon », ou « Partie nulle · Pat ». Vide si la partie continue. */
+export function resultLine(outcome: Outcome, reason: string): string {
+  const winner = outcomeWinner(outcome);
+  if (winner === undefined) return "";
+  return `${winnerText(winner)} · ${neutralReason(reason || outcome.type)}`;
 }
