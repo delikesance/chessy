@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { LogLine } from "../../game/logic";
-import type { SkillSlot, StateView } from "../../protocol";
+import { PIECE_FR, type LogLine } from "../../game/logic";
+import { drawPiece } from "../../game/textures";
+import type { Piece, SkillSlot, StateView } from "../../protocol";
 import { skillInfo } from "../../skills";
 import { store, type ChatLine } from "../../store";
 import { SkillArt } from "../../ui/SkillArt";
@@ -11,6 +12,50 @@ interface SkillListProps {
   myTurn: boolean;
   active: string | null;
   onToggle: (skill: SkillSlot["skill"]) => void;
+}
+
+/** Libellé d'état d'une compétence : « 2/3 usages » pour Mind Reading, sinon utilisée / cible / tour. */
+export function slotStatus(slot: SkillSlot, myTurn: boolean, targets: number): string {
+  if (slot.used) return "Utilisée";
+  const max = slot.max_uses ?? 1;
+  const left = max - (slot.uses ?? 0);
+  const count = max > 1 ? `${left}/${max} usages` : "1 usage";
+  if (!myTurn) return max > 1 ? count : "Tour adverse";
+  if (targets === 0) return "Aucune cible";
+  return count;
+}
+
+/** Pièce dessinée avec sa texture de plateau (banc). */
+function PieceThumb({ piece, size }: { piece: Piece; size: number }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (ref.current) drawPiece(ref.current, piece.kind, piece.color);
+  }, [piece.kind, piece.color]);
+  return <canvas ref={ref} className="gm-thumb" style={{ width: size, height: size }} aria-hidden="true" />;
+}
+
+/** Tiroir des pièces mises de côté par The Bench ; elles reviennent à votre prochain tour. */
+export function BenchPanel({ pieces }: { pieces: Piece[] }) {
+  if (pieces.length === 0) return null;
+  return (
+    <section className="gm-panel card gm-bench" aria-labelledby="gm-bench-h">
+      <div className="gm-panel-head">
+        <h2 id="gm-bench-h" className="gm-h">
+          Sur le banc
+        </h2>
+        <span className="mono muted">{pieces.length}</span>
+      </div>
+      <ul className="gm-bench-row">
+        {pieces.map((p) => (
+          <li key={p.id} title={`${PIECE_FR[p.kind]} (revient à votre prochain tour)`}>
+            <PieceThumb piece={p} size={48} />
+            <span className="muted">{PIECE_FR[p.kind]}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="muted gm-bench-note">Elles reviennent sur la case libre la plus proche.</p>
+    </section>
+  );
 }
 
 /** Les compétences du joueur : un clic lance le ciblage. */
@@ -30,7 +75,7 @@ export function SkillList({ slots, view, myTurn, active, onToggle }: SkillListPr
           const info = skillInfo(slot.skill);
           const n = options(slot.skill);
           const usable = myTurn && !slot.used && n > 0;
-          const status = slot.used ? "Utilisée" : !myTurn ? "À votre tour" : n === 0 ? "Aucune cible" : "1 usage";
+          const status = slotStatus(slot, myTurn, n);
           const on = active === slot.skill;
           return (
             <li key={slot.skill}>
@@ -82,7 +127,7 @@ export function Journal({ log, you }: { log: LogLine[]; you: StateView["you"] })
       <ol className="gm-log">
         {log.length === 0 && <li className="muted gm-empty">Aucune action pour l'instant.</li>}
         {log.map((line) => (
-          <li key={line.ply} className={line.actor === you ? "me" : "opp"}>
+          <li key={line.key ?? line.ply} className={line.actor === you ? "me" : "opp"}>
             <span className="mono gm-log-n">{line.ply}</span>
             <span className="gm-log-who">{line.actor === you ? "Vous" : "Adv."}</span>
             <span className="gm-log-text">

@@ -1,15 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PhaserBoard } from "../game/PhaserBoard";
-import { appendLog, describeAction, launchOf, type LogLine } from "../game/logic";
-import { click, highlights, IDLE, startSkill, type Interaction, type PendingPromotion } from "../interaction";
+import { actionKey, appendLog, describeAction, launchOf, type LogLine } from "../game/logic";
+import {
+  activateSkill,
+  cancelSpawn,
+  chooseSpawn,
+  click,
+  highlights,
+  IDLE,
+  targetHint,
+  targetShape,
+  type Interaction,
+  type PendingPromotion,
+  type PendingSpawn,
+} from "../interaction";
 import { describeOutcome } from "../outcome";
-import type { SkillId, Square, StateView } from "../protocol";
+import type { SkillId, SpawnKind, Square, StateView } from "../protocol";
 import { skillName } from "../skills";
 import { store, useAppState } from "../store";
 import { Wordmark } from "../ui/NavBar";
-import { LaunchCard, PromotionPicker, ResultPanel } from "./game/Overlays";
+import { LaunchCard, PromotionPicker, ResultPanel, SpawnPicker } from "./game/Overlays";
 import { EvalBar, Plate } from "./game/Plate";
-import { Actions, Chat, Journal, SkillList, TrainingNote } from "./game/SidePanels";
+import { Actions, BenchPanel, Chat, Journal, SkillList, TrainingNote } from "./game/SidePanels";
 import "./game.css";
 
 const LAUNCH_MS = 2500; // 0,55 s de délai (on voit d'abord l'effet sur le plateau) + 1,9 s de carte
@@ -24,6 +36,7 @@ export function Game({ view }: { view: StateView }) {
   const { over, chat, rematch, account } = useAppState();
   const [interaction, setInteraction] = useState<Interaction>(IDLE);
   const [promotion, setPromotion] = useState<PendingPromotion | null>(null);
+  const [spawn, setSpawn] = useState<PendingSpawn | null>(null);
   const [log, setLog] = useState<LogLine[]>([]);
   const [launch, setLaunch] = useState<Launch | null>(null);
   const [resultHidden, setResultHidden] = useState(false);
@@ -31,11 +44,16 @@ export function Game({ view }: { view: StateView }) {
   // Instant de réception de la position : base de l'interpolation des horloges.
   const stamp = useMemo(() => performance.now(), [view.clock]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Empreinte de la dernière action : change à chaque coup *et* à chaque Mind Reading/Control, qui
+  // laissent le demi-coup (et le trait) inchangés, mais pas quand la même position est renvoyée.
+  const action = actionKey(view);
+
   // A new position invalidates whatever was half-selected.
   useEffect(() => {
     setInteraction(IDLE);
     setPromotion(null);
-  }, [view.game_id, view.ply]);
+    setSpawn(null);
+  }, [view.game_id, action]);
 
   // Journal : une ligne par action, remis à zéro à chaque nouvelle partie.
   const logGame = useRef(view.game_id);
@@ -43,24 +61,25 @@ export function Game({ view }: { view: StateView }) {
     const fresh = logGame.current !== view.game_id;
     logGame.current = view.game_id;
     if (fresh) setResultHidden(false);
-    setLog((cur) => appendLog(fresh ? [] : cur, describeAction(view)));
+    const line = describeAction(view);
+    setLog((cur) => appendLog(fresh ? [] : cur, line && { ...line, key: action }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view.game_id, view.ply]);
+  }, [view.game_id, action]);
 
   // Carte de lancement : seulement pour les compétences lancées pendant qu'on regarde la partie.
-  const seen = useRef<{ game: string; ply: number } | null>(null);
+  const seen = useRef<{ game: string; action: string } | null>(null);
   const launchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const prev = seen.current;
-    seen.current = { game: view.game_id, ply: view.ply };
-    if (!prev || prev.game !== view.game_id || prev.ply === view.ply) return;
+    seen.current = { game: view.game_id, action };
+    if (!prev || prev.game !== view.game_id || prev.action === action) return;
     const cast = launchOf(view);
     if (!cast) return;
     if (launchTimer.current) clearTimeout(launchTimer.current);
-    setLaunch({ key: view.ply, skill: cast.skill, mine: cast.color === view.you });
+    setLaunch({ key: Date.now(), skill: cast.skill, mine: cast.color === view.you });
     launchTimer.current = setTimeout(() => setLaunch(null), LAUNCH_MS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view.game_id, view.ply]);
+  }, [view.game_id, action]);
   useEffect(() => {
     return () => {
       if (launchTimer.current) clearTimeout(launchTimer.current);
@@ -71,9 +90,15 @@ export function Game({ view }: { view: StateView }) {
   const myTurn = view.to_move === view.you && !over_;
   const activeSkill = interaction.kind === "skill" ? interaction.skill : null;
 
+  // Une compétence sans cible (Tornado, Wall, Mind Reading…) part tout de suite ; les autres arment le ciblage.
   const toggleSkill = useCallback(
-    (skill: SkillId) => setInteraction((cur) => (cur.kind === "skill" && cur.skill === skill ? IDLE : startSkill(view, skill))),
-    [view],
+    (skill: SkillId) => {
+      const result = activateSkill(view, interaction, skill);
+      setSpawn(null);
+      setInteraction(result.interaction);
+      if (result.send) store.send({ type: "action", action: result.send });
+    },
+    [view, interaction],
   );
 
   useEffect(() => {
@@ -83,25 +108,44 @@ export function Game({ view }: { view: StateView }) {
       if (e.key === "Escape") {
         setInteraction(IDLE);
         setPromotion(null);
+        setSpawn(null);
       } else if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const slot = view.my_skills[Number(e.key) - 1];
-        if (slot && !slot.used) toggleSkill(slot.skill);
+        if (slot && !slot.used && !promotion && !spawn) toggleSkill(slot.skill);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view, toggleSkill]);
+  }, [view, toggleSkill, promotion, spawn]);
 
   const onSquare = useCallback(
     (square: Square) => {
-      if (promotion) return;
+      if (promotion || spawn) return;
       const result = click(view, interaction, square);
       setInteraction(result.interaction);
       if (result.promotion) setPromotion(result.promotion);
+      if (result.spawn) setSpawn(result.spawn);
       if (result.send) store.send({ type: "action", action: result.send });
     },
-    [view, interaction, promotion],
+    [view, interaction, promotion, spawn],
   );
+
+  const pickSpawn = useCallback(
+    (kind: SpawnKind) => {
+      if (!spawn) return;
+      const result = chooseSpawn(spawn, kind);
+      setSpawn(null);
+      setInteraction(result.interaction);
+      if (result.send) store.send({ type: "action", action: result.send });
+    },
+    [spawn],
+  );
+
+  const cancelSpawnPick = useCallback(() => {
+    if (!spawn) return;
+    setInteraction(cancelSpawn(spawn));
+    setSpawn(null);
+  }, [spawn]);
 
   const hl = useMemo(() => highlights(view, interaction), [view, interaction]);
 
@@ -119,7 +163,8 @@ export function Game({ view }: { view: StateView }) {
   } else if (promotion) {
     hint = "Choisissez la pièce de promotion.";
   } else if (activeSkill) {
-    hint = `${skillName(activeSkill)} : ${interaction.kind === "skill" && interaction.first !== null ? "choisissez la case de destination." : "choisissez une pièce ou une case en surbrillance."}`;
+    const first = interaction.kind === "skill" ? interaction.first : null;
+    hint = `${skillName(activeSkill)} : ${targetHint(targetShape(view, activeSkill), first, spawn !== null)}`;
     tone = "skill";
   } else if (!view.opponent_connected) {
     hint = "L'adversaire s'est déconnecté. Il a 60 s pour revenir.";
@@ -127,6 +172,8 @@ export function Game({ view }: { view: StateView }) {
   } else if (view.in_check && myTurn) {
     hint = "Échec : protégez votre roi.";
     tone = "check";
+  } else if (myTurn && view.events.some((e) => e.type === "skill_used" && e.color === view.you && (e.skill === "mind" || e.skill === "control"))) {
+    hint = "Vous avez gardé la main : jouez un coup (ou une autre compétence).";
   } else if (view.draw_offer === "them") {
     hint = "Votre adversaire propose la nulle.";
   } else {
@@ -153,6 +200,7 @@ export function Game({ view }: { view: StateView }) {
       <main className="gm-grid">
         <aside className="gm-left">
           <SkillList slots={view.my_skills} view={view} myTurn={myTurn} active={activeSkill} onToggle={toggleSkill} />
+          <BenchPanel pieces={view.benched} />
           {view.my_skills.length > 0 && (
             <p className="muted gm-tip">
               {view.my_skills.length === 1 ? "Touche 1" : `Touches 1 à ${view.my_skills.length}`} pour armer une
@@ -167,6 +215,7 @@ export function Game({ view }: { view: StateView }) {
             elo={opp.elo}
             color={opponentColor}
             board={view.board}
+            rivalBench={view.benched}
             clock={view.clock}
             clockEnabled={clockEnabled}
             bot={isBot}
@@ -207,6 +256,7 @@ export function Game({ view }: { view: StateView }) {
                   }}
                 />
               )}
+              {spawn && <SpawnPicker skill={spawn.skill} options={spawn.options} onPick={pickSpawn} onCancel={cancelSpawnPick} />}
               {over_ && !resultHidden && (
                 <ResultPanel
                   outcome={view.outcome}
@@ -226,6 +276,7 @@ export function Game({ view }: { view: StateView }) {
             elo={account && !account.guest ? account.elo : null}
             color={view.you}
             board={view.board}
+            ownBench={view.benched}
             clock={view.clock}
             clockEnabled={clockEnabled}
             stamp={stamp}

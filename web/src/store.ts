@@ -67,6 +67,10 @@ export function normalizeState(view: StateView): StateView {
   return {
     ...view,
     clock_enabled: view.clock_enabled ?? true,
+    traps: view.traps ?? [],
+    benched: view.benched ?? [],
+    terrain: view.terrain ?? [],
+    effects: view.effects ?? [],
     opponent: { ...view.opponent, bot: view.opponent?.bot ?? false },
   };
 }
