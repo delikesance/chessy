@@ -180,7 +180,7 @@ function describeEvent(e: GameEvent, board: (Piece | null)[], inSkill: boolean):
     case "vanished":
       return [`${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)} disparaît`];
     case "loan_ended":
-      return [`${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)} restituée`];
+      return [`prêt terminé (${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)})`];
     default:
       return [];
   }

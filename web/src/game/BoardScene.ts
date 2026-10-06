@@ -310,7 +310,8 @@ export class BoardScene extends Phaser.Scene {
     this.reconcileTerrain(view, !fresh, ctx);
     this.reconcileTraps(view, !fresh, ctx);
     this.reconcileMarks(view);
-    this.trackBest(view, advanced);
+    // Après une reconnexion, le dernier `best_move` encore valable (même demi-coup) est reaffiché.
+    this.trackBest(view, advanced || fresh);
     if (advanced) this.playEffects(view, ctx);
     this.drawHighlights();
   }
