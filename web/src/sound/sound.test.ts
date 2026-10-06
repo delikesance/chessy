@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GameEvent, Piece } from "../protocol";
-import { ALL_SFX, allowed, createSfx, MAX_VOICES, SKILL_IDS, SOUND_DEFAULTS, SOUND_KEY, sanitizeSettings } from "./index";
+import { ALL_SFX, allowed, createSfx, MAX_VOICES, SKILL_IDS, SOUND_DEFAULTS, SOUND_KEY, SOUND_VERSION, sanitizeSettings } from "./index";
+import { levelOf } from "./levels";
 import { mapEventsToSfx, planSfx } from "./mapping";
 import { RECIPES } from "./recipes";
 
@@ -90,6 +91,33 @@ describe("réglages", () => {
     const b = createSfx({ AudioCtor: null, storage, target: null });
     expect(b.getSettings()).toMatchObject({ master: 0.3, ui: false, enabled: false });
   });
+  it("défauts plus discrets qu'avant (général 0,5 au lieu de 0,7) et curseur qui monte toujours jusqu'à 1", () => {
+    expect(SOUND_DEFAULTS.master).toBeLessThan(0.7);
+    expect(SOUND_DEFAULTS.master).toBe(0.5);
+    expect(sanitizeSettings({ master: 1 }).master).toBe(1);
+  });
+  it("migration : les anciens défauts enregistrés (0,7 / 1) deviennent les nouveaux, les choix personnels restent", () => {
+    const load = (stored: unknown) => {
+      const storage = { getItem: () => JSON.stringify(stored), setItem: () => {} };
+      return createSfx({ AudioCtor: null, storage, target: null }).getSettings();
+    };
+    // version 1 (sans champ version), volumes d'origine : on prend les nouveaux défauts
+    expect(load({ enabled: true, master: 0.7, effects: 1, ui: true, yourTurn: true })).toEqual(SOUND_DEFAULTS);
+    // version 1, mais volume choisi par l'utilisateur : conservé ; les interrupteurs sont toujours conservés
+    expect(load({ enabled: false, master: 0.4, effects: 1, ui: false, yourTurn: true })).toEqual({ ...SOUND_DEFAULTS, enabled: false, master: 0.4, ui: false });
+    expect(load({ master: 0.9, effects: 0.6 })).toMatchObject({ master: 0.9, effects: 0.6 });
+    // version 2 : 0,7 est un vrai choix, jamais migré
+    expect(load({ version: SOUND_VERSION, master: 0.7, effects: 1 }).master).toBe(0.7);
+    // la sauvegarde porte la version : on ne migre qu'une fois
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    store.set(SOUND_KEY, JSON.stringify({ master: 0.7, effects: 1 }));
+    const a = createSfx({ AudioCtor: null, storage, target: null });
+    expect(a.getSettings().master).toBe(0.5);
+    a.setSettings({ master: 0.7 });
+    expect(JSON.parse(store.get(SOUND_KEY)!)).toMatchObject({ version: SOUND_VERSION, master: 0.7 });
+    expect(createSfx({ AudioCtor: null, storage, target: null }).getSettings().master).toBe(0.7);
+  });
   it("stockage défaillant : pas d'exception", () => {
     const storage = {
       getItem: () => {
@@ -169,8 +197,8 @@ class FakeCtx {
   createGain() {
     return this.n(Object.assign(new FakeNode(), { gain: new FakeParam() }));
   }
-  createDynamicsCompressor() {
-    return this.n(Object.assign(new FakeNode(), { threshold: new FakeParam(), knee: new FakeParam(), ratio: new FakeParam(), attack: new FakeParam(), release: new FakeParam() }));
+  createWaveShaper() {
+    return this.n(Object.assign(new FakeNode(), { curve: null as unknown, oversample: "none" }));
   }
   createConvolver() {
     return this.n(Object.assign(new FakeNode(), { buffer: null as unknown }));
@@ -295,6 +323,19 @@ describe("moteur Web Audio", () => {
     s.play("shield", { delay: 10 });
     expect(c.sources.length).toBeGreaterThan(sources);
     expect(names.length).toBe(MAX_VOICES);
+  });
+
+  it("le gain de la voix combine volume des effets, volume demandé et niveau propre au son", () => {
+    const { s, ctx } = setup();
+    s.unlock();
+    s.setSettings({ effects: 0.5 });
+    const before = ctx().nodes.length;
+    s.play("skill_freeze", { volume: 0.8 });
+    const gains = ctx()
+      .nodes.slice(before)
+      .map((n) => (n as unknown as { gain?: { value: number } }).gain?.value)
+      .filter((g): g is number => typeof g === "number");
+    expect(gains.some((g) => Math.abs(g - 0.5 * 0.8 * levelOf("skill_freeze")) < 1e-9)).toBe(true);
   });
 
   it("doublon immédiat ignoré", () => {

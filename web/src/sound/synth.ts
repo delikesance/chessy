@@ -25,6 +25,8 @@ export interface ToneSpec {
   /** Modulation d'amplitude (trémolo) : profondeur 0..1. */
   tremolo?: { rate: number; depth: number };
   pan?: number;
+  /** Balancement stéréo oscillant autour de `pan` (profondeur négative = sens inverse). */
+  panLfo?: { rate: number; depth: number };
   /** Part envoyée à la réverbération (0..1). */
   send?: number;
 }
@@ -92,19 +94,36 @@ function makeNoise(ctx: AudioContext, seconds = 1.5): AudioBuffer {
   return buffer;
 }
 
-/** Chaîne de sortie : bus -> compresseur/limiteur -> gain général -> sortie ; réverbération en parallèle. */
+/** Plafond du limiteur (avant le volume général) : aucune crête ne dépasse ce niveau, quel que soit le nombre de voix. */
+export const LIMIT = 0.8;
+/** Le limiteur travaille sur [-LIMIT_RANGE, LIMIT_RANGE] ; au-delà, la courbe est plate. */
+const LIMIT_RANGE = 3;
+
+/**
+ * Écrêteur doux (tanh) : transparent aux faibles niveaux, plafonné à `LIMIT`. Contrairement à un
+ * DynamicsCompressor (gain de rattrapage automatique, niveau qui dépend de la durée des sons), il est
+ * statique : le niveau d'un son ne dépend que de sa recette, donc mesurable hors ligne et réglable au dB près.
+ */
+export function limiterCurve(size = 2048): Float32Array<ArrayBuffer> {
+  const curve = new Float32Array(size);
+  for (let i = 0; i < size; i++) {
+    const x = LIMIT_RANGE * ((2 * i) / (size - 1) - 1);
+    curve[i] = LIMIT * Math.tanh(x / LIMIT);
+  }
+  return curve;
+}
+
+/** Chaîne de sortie : bus -> limiteur doux -> gain général -> sortie ; réverbération en parallèle. */
 export function createEngine(ctx: AudioContext, masterGain: number): Engine {
   const bus = ctx.createGain();
-  // Les recettes sont écrites à niveau modeste (crêtes 0,1 à 0,55) : gain de rattrapage avant le limiteur.
-  bus.gain.value = 1.45;
+  bus.gain.value = 1;
   const master = ctx.createGain();
   master.gain.value = masterGain;
-  const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -16;
-  limiter.knee.value = 12;
-  limiter.ratio.value = 8;
-  limiter.attack.value = 0.003;
-  limiter.release.value = 0.2;
+  const pre = ctx.createGain();
+  pre.gain.value = 1 / LIMIT_RANGE;
+  const limiter = ctx.createWaveShaper();
+  limiter.curve = limiterCurve();
+  limiter.oversample = "2x";
   const convolver = ctx.createConvolver();
   convolver.buffer = makeImpulse(ctx);
   const reverb = ctx.createGain();
@@ -113,7 +132,8 @@ export function createEngine(ctx: AudioContext, masterGain: number): Engine {
   reverb.connect(convolver);
   convolver.connect(wet);
   wet.connect(bus);
-  bus.connect(limiter);
+  bus.connect(pre);
+  pre.connect(limiter);
   limiter.connect(master);
   master.connect(ctx.destination);
   return { ctx, bus, reverb, noise: makeNoise(ctx), master };
