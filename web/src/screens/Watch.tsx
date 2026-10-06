@@ -9,6 +9,7 @@ import { store, useAppState } from "../store";
 import { SkillArt } from "../ui/SkillArt";
 import { EvalBar, Plate } from "./game/Plate";
 import { BoardStage } from "./replay/BoardStage";
+import { keepVisible } from "./replay/scroll";
 import "./game.css";
 import "./replay.css";
 
@@ -189,9 +190,9 @@ function Spectator({ state }: { state: SpectatingState }) {
 }
 
 function SpectatorLog({ log }: { log: LogLine[] }) {
-  const end = useRef<HTMLLIElement>(null);
+  const list = useRef<HTMLOListElement>(null);
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "nearest" });
+    keepVisible(list.current, null, true);
   }, [log.length]);
   return (
     <section className="gm-panel card gm-journal" aria-labelledby="rp-log-h">
@@ -201,7 +202,7 @@ function SpectatorLog({ log }: { log: LogLine[] }) {
         </h2>
         <span className="mono muted">{log.length}</span>
       </div>
-      <ol className="gm-log" aria-live="polite">
+      <ol className="gm-log rp-log" ref={list} aria-live="polite">
         {log.length === 0 && <li className="muted gm-empty">Aucun coup vu pour l'instant.</li>}
         {log.map((line) => (
           <li key={line.key ?? line.ply}>
@@ -217,7 +218,6 @@ function SpectatorLog({ log }: { log: LogLine[] }) {
             </span>
           </li>
         ))}
-        <li ref={end} aria-hidden="true" />
       </ol>
     </section>
   );

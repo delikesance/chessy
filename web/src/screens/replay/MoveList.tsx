@@ -3,6 +3,7 @@ import type { Analysis, MoveInfo } from "../../protocol";
 import { analysisByPly, LABEL_GLYPH, LABEL_SHORT, LABEL_TEXT } from "../../replay/labels";
 import { COLOR_FR } from "../../replay/frames";
 import { SkillArt } from "../../ui/SkillArt";
+import { keepVisible } from "./scroll";
 
 interface Props {
   moves: MoveInfo[];
@@ -26,9 +27,10 @@ export function LabelChip({ label, compact = false }: { label: keyof typeof LABE
 export function MoveList({ moves, index, analysis, onSelect }: Props) {
   const byPly = analysisByPly(analysis);
   const current = useRef<HTMLLIElement>(null);
+  const list = useRef<HTMLOListElement>(null);
 
   useEffect(() => {
-    current.current?.scrollIntoView({ block: "nearest" });
+    keepVisible(list.current, current.current);
   }, [index]);
 
   return (
@@ -39,7 +41,7 @@ export function MoveList({ moves, index, analysis, onSelect }: Props) {
         </h2>
         <span className="mono muted">{moves.length}</span>
       </div>
-      <ol className="rp-movelist">
+      <ol className="rp-movelist" ref={list}>
         <li ref={index === 0 ? current : undefined}>
           <button type="button" className="rp-move" aria-current={index === 0 ? "step" : undefined} onClick={() => onSelect(0)}>
             <span className="mono rp-move-n">0</span>

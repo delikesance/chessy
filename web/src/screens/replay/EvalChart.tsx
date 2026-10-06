@@ -3,8 +3,8 @@ import type { Analysis } from "../../protocol";
 import { buildCurve, curveMarks, evalSeries, indexFromX, xForIndex } from "../../replay/evalCurve";
 import { formatEval, LABEL_COLOR, LABEL_TEXT } from "../../replay/labels";
 
-const W = 600;
-const H = 110;
+const W = 480;
+const H = 130;
 
 interface Props {
   analysis: Analysis;
