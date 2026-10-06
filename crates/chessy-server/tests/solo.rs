@@ -244,7 +244,7 @@ async fn skills_work_for_the_player_and_do_not_break_the_bot() {
 }
 
 #[tokio::test]
-async fn a_whole_game_ends_with_no_reward_no_elo_and_no_record() {
+async fn a_whole_game_ends_with_no_reward_no_elo_and_no_public_trace() {
     let db = TempDb::new();
     let store = Store::open(db.path_str()).unwrap();
     let app = App::new(store.clone(), cfg());
@@ -285,11 +285,17 @@ async fn a_whole_game_ends_with_no_reward_no_elo_and_no_record() {
         profile.recent.is_empty(),
         "solo games stay out of the history"
     );
-    let rows: i64 = db
+    // The game is recorded for replay (docs/spec-v4.md §1), as a solo game
+    // whose bot seat is not a player.
+    let (rows, kind, seats): (i64, String, i64) = db
         .raw()
-        .query_row("SELECT COUNT(*) FROM games", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*), MIN(kind), SUM(white IS NULL) + SUM(black IS NULL) FROM games",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
         .unwrap();
-    assert_eq!(rows, 0, "solo games are not recorded");
+    assert_eq!((rows, kind.as_str(), seats), (1, "solo", 1));
     // Back in the lobby and free to play again.
     assert_eq!(a.last("lobby")["status"]["type"], "idle");
     a.say(json!({"type": "solo_start", "elo": 500, "color": "white"}));

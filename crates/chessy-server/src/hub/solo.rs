@@ -12,8 +12,8 @@
 //! comes back with [`Hub::apply_bot_move`]; a result for a game that has moved
 //! on (different `ply`, gone, over) is discarded.
 //!
-//! Solo games are never recorded: no `games` row (so no public history), no
-//! Elo, no reward.
+//! Solo games are recorded for replay (`kind: solo`, the bot's seat is NULL)
+//! but stay out of the public history and the ranking; no Elo, no reward.
 
 use std::time::Duration;
 
@@ -23,6 +23,7 @@ use chessy_engine::{Action, Color};
 use super::social::Rematch;
 use super::{Hub, Phase, Session, Timer};
 use crate::bot::{self, BotJob};
+use crate::games_store::GameKind;
 use crate::protocol::*;
 use crate::store::reason_of;
 
@@ -81,7 +82,7 @@ impl Hub {
             bot: human.opposite(),
             elo,
         };
-        self.open_session(white, black, false, Some(seat));
+        self.open_session(white, black, false, GameKind::Solo, Some(seat));
     }
 
     // ---- the bot's turn --------------------------------------------------
@@ -146,6 +147,7 @@ impl Hub {
             phase: Phase::Playing { game },
             solo: Some(solo),
             draw_offer,
+            recording,
             ..
         }) = self.games.get_mut(game_id)
         else {
@@ -155,19 +157,17 @@ impl Hub {
             return;
         }
         // The AI only returns legal actions; if it ever did not, play any.
-        let events = match action.and_then(|a| game.apply(a).ok()) {
-            Some(events) => events,
-            None => {
-                let fallback = game
-                    .legal_actions()
+        let played = action
+            .and_then(|a| game.apply(a).ok().map(|events| (a, events)))
+            .or_else(|| {
+                game.legal_actions()
                     .into_iter()
-                    .find_map(|a| game.apply(a).ok());
-                match fallback {
-                    Some(events) => events,
-                    None => return,
-                }
-            }
+                    .find_map(|a| game.apply(a).ok().map(|events| (a, events)))
+            });
+        let Some((action, events)) = played else {
+            return;
         };
+        recording.actions.push(action);
         *draw_offer = None;
         let outcome = game.outcome();
         self.broadcast_state(game_id, events);

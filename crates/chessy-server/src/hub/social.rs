@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 use super::{Hub, Timer};
+use crate::games_store::GameKind;
 use crate::protocol::*;
 use crate::social::{RemoveOutcome, RequestOutcome, RespondOutcome};
 use crate::store::{PlayerRow, StoreError};
@@ -20,6 +21,7 @@ pub(super) struct Challenge {
 pub(super) struct Rematch {
     pub opponent: PlayerId,
     rated: bool,
+    kind: GameKind,
     /// Who played white last time; colours swap.
     white: PlayerId,
     requested_by: Option<PlayerId>,
@@ -33,6 +35,7 @@ impl Rematch {
         Rematch {
             opponent: bot.clone(),
             rated: false,
+            kind: GameKind::Solo,
             white: bot,
             requested_by: None,
             solo: Some(setup),
@@ -336,7 +339,12 @@ impl Hub {
             let name = challenger.username.unwrap_or_default();
             return self.notice(player, "challenge_expired", Some(&name));
         }
-        self.create_game(challenger.id, player.to_string(), false);
+        self.create_game(
+            challenger.id,
+            player.to_string(),
+            false,
+            GameKind::Challenge,
+        );
     }
 
     pub fn challenge_cancel(&mut self, player: &str) {
@@ -428,13 +436,14 @@ impl Hub {
     // ---- rematches -------------------------------------------------------
 
     /// Called when a game ends: both players may now ask for a rematch.
-    pub(super) fn offer_rematch(&mut self, players: &[PlayerId; 2], rated: bool) {
+    pub(super) fn offer_rematch(&mut self, players: &[PlayerId; 2], rated: bool, kind: GameKind) {
         for (i, player) in players.iter().enumerate() {
             self.rematches.insert(
                 player.clone(),
                 Rematch {
                     opponent: players[1 - i].clone(),
                     rated,
+                    kind,
                     white: players[0].clone(),
                     requested_by: None,
                     solo: None,
@@ -514,12 +523,12 @@ impl Hub {
             return;
         };
         let r = &self.rematches[player];
-        let rated = r.rated;
+        let (rated, kind) = (r.rated, r.kind);
         let (white, black) = if r.white == player {
             (opponent, player.to_string())
         } else {
             (player.to_string(), opponent)
         };
-        self.start_session(white, black, rated);
+        self.start_session(white, black, rated, kind);
     }
 }
