@@ -3,6 +3,7 @@
 import type { Color, GameEvent } from "../protocol";
 import { isLowPriority, isUiSfx, type SfxName } from "./names";
 import { mapEventsToSfx, planSfx } from "./mapping";
+import { levelOf } from "./levels";
 import { RECIPES } from "./recipes";
 import { createEngine, Voice, type Engine } from "./synth";
 
@@ -40,9 +41,26 @@ export interface Sfx {
 }
 
 export const SOUND_KEY = "chessy.sound";
-export const SOUND_DEFAULTS: SoundSettings = { enabled: true, master: 0.7, effects: 1, ui: true, yourTurn: true };
+/** Version du format stocké. 1 : volumes d'origine (général 0,7) ; 2 : sons plus discrets (général 0,5, niveaux par son). */
+export const SOUND_VERSION = 2;
+export const SOUND_DEFAULTS: SoundSettings = { enabled: true, master: 0.5, effects: 1, ui: true, yourTurn: true };
+/** Anciens réglages par défaut : un utilisateur qui n'y a jamais touché reçoit les nouveaux, plus discrets. */
+const LEGACY_DEFAULTS = { master: 0.7, effects: 1 };
 
 const clamp01 = (n: unknown, fallback: number) => (typeof n === "number" && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : fallback);
+
+/** Réglages enregistrés par une version antérieure : les volumes encore égaux aux anciens défauts passent aux nouveaux. */
+export function migrateSettings(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const o = { ...(raw as Record<string, unknown>) };
+  const version = typeof o.version === "number" ? o.version : 1;
+  if (version < SOUND_VERSION) {
+    const same = (a: unknown, b: number) => typeof a === "number" && Math.abs(a - b) < 1e-9;
+    if (same(o.master, LEGACY_DEFAULTS.master)) delete o.master;
+    if (same(o.effects, LEGACY_DEFAULTS.effects)) delete o.effects;
+  }
+  return o;
+}
 
 export function sanitizeSettings(raw: unknown): SoundSettings {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -105,7 +123,7 @@ export function createSfx(deps: SfxDeps = {}): Sfx {
   function load(): SoundSettings {
     try {
       const raw = d.storage?.getItem(SOUND_KEY);
-      return raw ? sanitizeSettings(JSON.parse(raw)) : { ...SOUND_DEFAULTS };
+      return raw ? sanitizeSettings(migrateSettings(JSON.parse(raw))) : { ...SOUND_DEFAULTS };
     } catch {
       return { ...SOUND_DEFAULTS };
     }
@@ -113,7 +131,7 @@ export function createSfx(deps: SfxDeps = {}): Sfx {
 
   function save() {
     try {
-      d.storage?.setItem(SOUND_KEY, JSON.stringify(settings));
+      d.storage?.setItem(SOUND_KEY, JSON.stringify({ version: SOUND_VERSION, ...settings }));
     } catch {
       // Mode privé : les réglages ne survivent pas à la session.
     }
@@ -178,7 +196,7 @@ export function createSfx(deps: SfxDeps = {}): Sfx {
         live[0].fadeOut(0.02);
       }
       const pitch = 1 + (d.random() * 2 - 1) * PITCH_SPREAD;
-      const volume = settings.effects * (opts.volume ?? 1);
+      const volume = settings.effects * (opts.volume ?? 1) * levelOf(name);
       const voice = new Voice(engine, t0, pitch, Math.max(0, volume), release);
       voices.push(voice);
       recipe(voice);
