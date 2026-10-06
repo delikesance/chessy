@@ -81,4 +81,7 @@
   .st-slider { grid-template-columns: 1fr 34px; }
   .st-slider .st-label { grid-column: 1 / -1; }
   .st-row { flex-wrap: wrap; }
+  .st-seg { width: 100%; }
+  .st-seg > button { padding: 0 8px; white-space: normal; height: 44px; line-height: 1.2; }
+  .st-card { padding: 18px 16px; }
 }
