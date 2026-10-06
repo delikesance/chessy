@@ -6,6 +6,7 @@
 //! rematches live in the `social` submodule.
 
 mod social;
+mod view;
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -870,6 +871,11 @@ impl Hub {
             Err(_) => return self.fail(player, "illegal_action", "that action is not allowed"),
         };
         let outcome = game.outcome();
+        if game.side_to_move() == color && !outcome.is_over() {
+            // Mind Reading / Mind Control keep the turn: same player, same
+            // clock, same flag timer; only the new state goes out.
+            return self.broadcast_state(&game_id, events);
+        }
         let ply = game.pos.ply;
         session.draw_offer = None;
         let mut next_flag = None;
@@ -1245,16 +1251,17 @@ fn state_view(
         }
     }
     let theirs = game.loadout(you.opposite());
+    let hidden = view::hidden_ids(&game.pos, you);
     StateView {
         game_id: game_id.to_string(),
         you,
         ply: game.pos.ply,
         to_move: game.side_to_move(),
         in_check: game.pos.in_check(game.side_to_move()),
-        board: game.pos.board.to_vec(),
+        board: view::board(&game.pos, &hidden),
         moves,
         skill_options,
-        my_skills: game.loadout(you).slots.clone(),
+        my_skills: view::skills(game.loadout(you)),
         opponent_skills: OpponentSkills {
             total: theirs.slots.len(),
             used: theirs
@@ -1264,9 +1271,12 @@ fn state_view(
                 .map(|s| s.skill)
                 .collect(),
         },
-        effects: game.pos.effects.clone(),
+        effects: view::effects(&game.pos, &hidden),
+        traps: view::own_traps(&game.pos, you),
+        benched: view::own_benched(&game.pos, you),
+        terrain: view::terrain(&game.pos),
         outcome: game.outcome(),
-        events,
+        events: view::events(events, you, game, &hidden),
         opponent_connected: session.connected[you.opposite().index()],
         clock: session
             .clock

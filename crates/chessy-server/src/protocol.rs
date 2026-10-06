@@ -2,7 +2,7 @@
 //! Squares are indices `0..64` with `a1 = 0` and `h8 = 63`.
 
 use chessy_engine::{
-    Action, ActiveEffect, Color, Event, Move, Outcome, Piece, SkillId, SkillSlot, SkillTarget,
+    Action, ActiveEffect, Color, Event, Move, Outcome, Piece, SkillId, SkillTarget, Square,
 };
 use serde::{Deserialize, Serialize};
 
@@ -206,6 +206,24 @@ pub struct OpponentSkills {
     pub used: Vec<SkillId>,
 }
 
+/// One of your skills with how often it has been used.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SkillSlotView {
+    pub skill: SkillId,
+    /// True once `uses` reached `max_uses`.
+    pub used: bool,
+    pub uses: u8,
+    pub max_uses: u8,
+}
+
+/// Geomancy terrain: `owner`'s pieces cross it freely, the others cannot.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct TerrainView {
+    pub square: Square,
+    pub owner: Color,
+    pub expires_at: u32,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct StateView {
     pub game_id: String,
@@ -217,9 +235,16 @@ pub struct StateView {
     /// Empty unless it is your turn.
     pub moves: Vec<Move>,
     pub skill_options: Vec<SkillOptions>,
-    pub my_skills: Vec<SkillSlot>,
+    pub my_skills: Vec<SkillSlotView>,
     pub opponent_skills: OpponentSkills,
+    /// Effects on pieces (terrain is in `terrain`); effects on pieces hidden
+    /// from you are left out.
     pub effects: Vec<ActiveEffect>,
+    /// Your own traps (the opponent's are secret).
+    pub traps: Vec<Square>,
+    /// Your own pieces currently on the bench.
+    pub benched: Vec<Piece>,
+    pub terrain: Vec<TerrainView>,
     pub outcome: Outcome,
     /// What the last action did, for animation. Empty on resume.
     pub events: Vec<Event>,
