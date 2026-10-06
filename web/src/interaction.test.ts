@@ -6,6 +6,7 @@ function view(partial: Partial<StateView>): StateView {
   return {
     game_id: "g",
     clock: { white_ms: 600_000, black_ms: 600_000, running: "white" },
+    clock_enabled: true,
     rated: false,
     opponent: { username: null, elo: null, guest: true },
     draw_offer: "none",

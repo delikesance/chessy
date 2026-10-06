@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me, ServerMsg, StateView } from "./protocol";
 import { noticeText, Store } from "./store";
 
@@ -11,6 +11,7 @@ function stateMsg(over: Partial<StateView> = {}): ServerMsg {
     type: "state",
     game_id: "g",
     clock: { white_ms: 1, black_ms: 1, running: "white" },
+    clock_enabled: true,
     rated: true,
     opponent: { username: "ada", elo: 1300, guest: false },
     draw_offer: "none",
@@ -96,6 +97,69 @@ describe("store messages", () => {
     store.receive({ type: "game_over", outcome: { type: "timeout", winner: "white" }, reward: null, rated: true, elo: { you_before: 1284, you_after: 1298, opp_before: 1300, opp_after: 1290 }, reason: "timeout" });
     expect(store.getState().over?.reason).toBe("timeout");
     expect(store.getState().account?.elo).toBe(1298);
+  });
+
+  it("defaults clock_enabled to true and bot to false when the server omits them", () => {
+    const { clock_enabled: _drop, ...legacy } = stateMsg() as StateView & { type: "state" };
+    store.receive(legacy as unknown as ServerMsg);
+    expect(store.getState().game?.clock_enabled).toBe(true);
+    expect(store.getState().game?.opponent.bot).toBe(false);
+    store.receive(stateMsg({ clock_enabled: false, opponent: { username: "Sage", elo: 1400, guest: true, bot: true } }));
+    expect(store.getState().game?.clock_enabled).toBe(false);
+    expect(store.getState().game?.opponent.bot).toBe(true);
+  });
+
+  describe("solo mode", () => {
+    const botInfo = { username: "Sage", elo: 1400, guest: true, bot: true };
+    const deckSelect: ServerMsg = { type: "deck_select", game_id: "g3", opponent: botInfo, rated: false, you: "white", deck: [], max_picks: 3, seconds: 30, submitted: false };
+    const sent: unknown[] = [];
+    let saved: Record<string, string>;
+
+    beforeEach(() => {
+      sent.length = 0;
+      saved = {};
+      vi.stubGlobal("localStorage", {
+        getItem: (k: string) => saved[k] ?? null,
+        setItem: (k: string, v: string) => {
+          saved[k] = v;
+        },
+      });
+      // Une socket factice suffit pour observer ce qui part vers le serveur.
+      vi.stubGlobal("WebSocket", { OPEN: 1 });
+      (store as unknown as { socket: unknown }).socket = { readyState: 1, send: (m: string) => sent.push(JSON.parse(m)) };
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("sends solo_start with a clamped level, remembers it and waits for the game", () => {
+      store.startSolo(1425, "black");
+      expect(sent).toEqual([{ type: "solo_start", elo: 1450, color: "black" }]);
+      expect(store.getState().soloPending).toBe(true);
+      expect(store.getState().solo).toEqual({ elo: 1450, color: "black" });
+      expect(JSON.parse(saved["chessy.solo"])).toEqual({ elo: 1450, color: "black" });
+      expect(new Store().getState().solo).toEqual({ elo: 1450, color: "black" });
+    });
+
+    it("stops waiting once the game is created or refused", () => {
+      store.startSolo(1200, "random");
+      store.receive(deckSelect);
+      expect(store.getState().soloPending).toBe(false);
+      expect(store.getState().deckSelect?.opponent.bot).toBe(true);
+
+      store.startSolo(1200, "random");
+      store.receive({ type: "error", code: "already_in_game", message: "" });
+      expect(store.getState().soloPending).toBe(false);
+    });
+
+    it("clears the chat for every new game", () => {
+      store.receive({ type: "chat", text: "salut", mine: true });
+      store.receive(deckSelect);
+      expect(store.getState().chat).toEqual([]);
+    });
+
+    it("rematch against the bot is a plain rematch_request", () => {
+      store.requestRematch();
+      expect(sent).toEqual([{ type: "rematch_request" }]);
+    });
   });
 
   it("tracks the rematch handshake", () => {

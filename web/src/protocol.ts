@@ -88,11 +88,15 @@ export interface OpponentInfo {
   username: string | null;
   elo: number | null;
   guest: boolean;
+  /** Adversaire IA (mode Solo) ; absent = faux. */
+  bot?: boolean;
 }
 
 export interface StateView {
   game_id: string;
   clock: Clock;
+  /** Faux en solo : pas d'horloge. Absent (serveur ancien) = vrai, voir `normalizeState`. */
+  clock_enabled: boolean;
   rated: boolean;
   opponent: OpponentInfo;
   draw_offer: "none" | "you" | "them";
@@ -117,6 +121,8 @@ export interface RewardOffer {
   steal_options: SkillId[];
   deck_full: boolean;
 }
+
+export type SoloColor = Color | "random";
 
 export type LobbyStatus =
   | { type: "idle" }
@@ -260,6 +266,7 @@ export type RewardChoice =
 export type ClientMsg =
   | { type: "hello"; token?: string }
   | { type: "queue_join"; ranked?: boolean }
+  | { type: "solo_start"; elo: number; color: SoloColor }
   | { type: "create_room" }
   | { type: "join_room"; code: string }
   | { type: "leave_lobby" }

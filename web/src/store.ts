@@ -11,9 +11,11 @@ import type {
   RewardOffer,
   ServerMsg,
   SkillId,
+  SoloColor,
   StateView,
   UserResult,
 } from "./protocol";
+import { clampElo, readSolo, SOLO_DEFAULT, writeSolo, type SoloSetting } from "./solo";
 
 export interface Toast {
   id: number;
@@ -54,6 +56,23 @@ export interface AppState {
   /** Messages de la partie en cours (remis à zéro à chaque nouvelle partie). */
   chat: ChatLine[];
   rematch: "none" | "offered" | "received";
+  /** Dernier réglage du mode Solo (mémorisé dans le navigateur). */
+  solo: SoloSetting;
+  /** `solo_start` envoyé, partie pas encore créée (le bot répond presque instantanément). */
+  soloPending: boolean;
+}
+
+/** Valeurs par défaut des champs que d'anciens serveurs n'envoient pas (`clock_enabled`, `opponent.bot`). */
+export function normalizeState(view: StateView): StateView {
+  return {
+    ...view,
+    clock_enabled: view.clock_enabled ?? true,
+    opponent: { ...view.opponent, bot: view.opponent?.bot ?? false },
+  };
+}
+
+export function normalizeDeckSelect(info: DeckSelectInfo): DeckSelectInfo {
+  return { ...info, opponent: { ...info.opponent, bot: info.opponent?.bot ?? false } };
 }
 
 const TOKEN_KEY = "chessy.token";
@@ -94,6 +113,8 @@ const initial: AppState = {
   toasts: [],
   chat: [],
   rematch: "none",
+  solo: SOLO_DEFAULT,
+  soloPending: false,
 };
 
 const ERROR_TEXT: Record<string, string> = {
@@ -138,15 +159,18 @@ export function noticeText(code: NoticeCode, username?: string): string {
 
 const TOAST_MS = 4500;
 const CHALLENGE_MS = 60_000;
+/** Au-delà, on suppose que le serveur n'a pas répondu à `solo_start` et on rend la main. */
+const SOLO_PENDING_MS = 10_000;
 
 export class Store {
-  private state: AppState = initial;
+  private state: AppState = { ...initial, solo: readSolo() };
   private listeners = new Set<() => void>();
   private socket: WebSocket | null = null;
   private retry = 0;
   private toastId = 0;
   private stopped = false;
   private challengeTimer: ReturnType<typeof setTimeout> | null = null;
+  private soloTimer: ReturnType<typeof setTimeout> | null = null;
 
   getState = () => this.state;
 
@@ -218,6 +242,7 @@ export class Store {
       over: null,
       chat: [],
       rematch: "none",
+      soloPending: false,
     });
     this.connect();
   }
@@ -249,6 +274,22 @@ export class Store {
   /** Leaves a finished game and returns to the lobby. */
   leaveGame() {
     this.set({ game: null, over: null, deckSelect: null, rematch: "none" });
+  }
+
+  /** Lance une partie contre l'IA et mémorise le réglage. */
+  startSolo(elo: number, color: SoloColor) {
+    const solo: SoloSetting = { elo: clampElo(elo), color };
+    writeSolo(solo);
+    this.send({ type: "solo_start", elo: solo.elo, color: solo.color });
+    this.set({ solo, soloPending: true });
+    if (this.soloTimer) clearTimeout(this.soloTimer);
+    this.soloTimer = setTimeout(() => this.clearSoloPending(), SOLO_PENDING_MS);
+  }
+
+  private clearSoloPending() {
+    if (this.soloTimer) clearTimeout(this.soloTimer);
+    this.soloTimer = null;
+    if (this.state.soloPending) this.set({ soloPending: false });
   }
 
   // ---- raccourcis d'actions -------------------------------------------------
@@ -348,8 +389,9 @@ export class Store {
       case "deck_select": {
         const { type: _type, ...info } = msg;
         this.clearIncoming();
+        this.clearSoloPending();
         this.set({
-          deckSelect: info,
+          deckSelect: normalizeDeckSelect(info),
           game: null,
           over: null,
           pendingReward: null,
@@ -361,7 +403,8 @@ export class Store {
       }
       case "state": {
         const { type: _type, ...view } = msg;
-        this.set({ game: view, deckSelect: null });
+        this.clearSoloPending();
+        this.set({ game: normalizeState(view), deckSelect: null });
         break;
       }
       case "opponent_status":
@@ -385,10 +428,12 @@ export class Store {
         });
         break;
       case "game_cancelled":
+        this.clearSoloPending();
         this.set({ game: null, deckSelect: null, over: null, rematch: "none" });
         this.notify("La partie a été annulée.");
         break;
       case "error":
+        this.clearSoloPending();
         if (msg.code === "replaced") this.set({ connection: "replaced" });
         this.notify(ERROR_TEXT[msg.code] ?? msg.message);
         break;
