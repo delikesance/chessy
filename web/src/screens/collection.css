@@ -28,7 +28,9 @@
 .co-deck { color: var(--text); border-color: var(--text); }
 .co-empty { padding: 40px; text-align: center; color: var(--muted); grid-column: 1; }
 
-.co-detail { position: sticky; top: 84px; padding: 24px; outline: none; min-height: 200px; max-height: calc(100vh - 104px); overflow-y: auto; }
+.co-detail { position: sticky; top: 84px; padding: 24px; outline: none; min-height: 200px; max-height: calc(100vh - 104px); overflow-y: auto; scrollbar-gutter: stable; }
+/* Aperçu à taille fixe : sa hauteur ne dépend plus de la largeur du panneau, sinon l'apparition de la barre de défilement le redimensionne en boucle (tremblement). */
+.co-detail .sv-fig .sv { width: min(100%, 240px); margin: 0 auto; }
 .co-placeholder { font-size: 14px; text-align: center; padding: 32px 0; }
 .co-detail-art { position: relative; display: grid; place-items: center; height: 116px; border-radius: var(--radius); background: var(--sunken); border: 1px solid var(--line); margin-bottom: 18px; }
 .co-detail-fam { color: var(--fam); }
