@@ -6,6 +6,7 @@
 
 pub mod game;
 pub mod position;
+pub mod search;
 pub mod skills;
 pub mod types;
 
