@@ -30,6 +30,7 @@ impl Skill for Remover {
             return;
         };
         let piece = pos.board[square as usize].take().expect("remover target");
+        pos.effects.retain(|e| e.piece != piece.id);
         ev.push(Event::Removed { square, piece });
     }
 }

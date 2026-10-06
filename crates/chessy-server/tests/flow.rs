@@ -477,7 +477,7 @@ fn unique_skills_cannot_have_two_owners() {
 async fn random_reward_with_nothing_left_to_gain() {
     let (app, store) = new_app(HubConfig::default());
     let (white, mut black) = start_game(&app, &store, DECK_A, DECK_B);
-    // The winner (black) already owns every classic skill and Remover.
+    // The winner (black) already owns every skill there is.
     let all: Vec<SkillId> = SkillId::ALL.to_vec();
     store.set_deck(&black.id, &all).unwrap();
     fools_mate(&white, &black);

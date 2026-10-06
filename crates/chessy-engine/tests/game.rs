@@ -181,9 +181,23 @@ fn promotion_requires_a_piece_choice() {
 
 #[test]
 fn skill_kinds() {
-    assert_eq!(SkillId::Remover.kind(), SkillKind::Unique);
-    for id in SkillId::ALL.iter().filter(|&&id| id != SkillId::Remover) {
-        assert_eq!(id.kind(), SkillKind::Classic, "{id:?}");
+    const UNIQUE: [SkillId; 7] = [
+        SkillId::Remover,
+        SkillId::Wall,
+        SkillId::Mirage,
+        SkillId::Evolve,
+        SkillId::Switch,
+        SkillId::Mind,
+        SkillId::Control,
+    ];
+    assert_eq!(SkillId::ALL.len(), 27);
+    for id in SkillId::ALL {
+        let expected = if UNIQUE.contains(&id) {
+            SkillKind::Unique
+        } else {
+            SkillKind::Classic
+        };
+        assert_eq!(id.kind(), expected, "{id:?}");
     }
 }
 

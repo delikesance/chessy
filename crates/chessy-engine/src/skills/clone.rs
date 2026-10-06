@@ -17,7 +17,7 @@ impl Skill for Clone {
                 continue;
             }
             for to in neighbors(from) {
-                if pos.board[to as usize].is_none() && Position::can_stand(piece.kind, to) {
+                if pos.can_place(color, piece.kind, to) {
                     out.push(SkillTarget::PieceTo { from, to });
                 }
             }
