@@ -2,12 +2,17 @@ import { useSyncExternalStore } from "react";
 import type {
   ClientMsg,
   DeckSelectInfo,
+  EloChange,
+  FriendsSnapshot,
   LobbyStatus,
+  Me,
+  NoticeCode,
   Outcome,
   RewardOffer,
   ServerMsg,
   SkillId,
   StateView,
+  UserResult,
 } from "./protocol";
 
 export interface Toast {
@@ -15,23 +20,45 @@ export interface Toast {
   text: string;
 }
 
+export interface ChatLine {
+  mine: boolean;
+  text: string;
+}
+
+export interface GameOver {
+  outcome: Outcome;
+  reward: RewardOffer | null;
+  rated: boolean;
+  elo: EloChange | null;
+  reason: string;
+}
+
 export interface AppState {
   connection: "connecting" | "open" | "closed" | "replaced";
   playerId: string | null;
+  /** Compte connecté (un invité a `guest: true`), `null` tant que le `welcome` n'est pas reçu. */
+  account: Me | null;
   deck: SkillId[];
   lobby: LobbyStatus;
   deckSelect: DeckSelectInfo | null;
   game: StateView | null;
   /** Set once the server reports the game as finished. */
-  over: { outcome: Outcome; reward: RewardOffer | null } | null;
+  over: GameOver | null;
   /** A reward from a past game that was never claimed. */
   pendingReward: RewardOffer | null;
-  toast: Toast | null;
+  friends: FriendsSnapshot;
+  userResults: { query: string; users: UserResult[] } | null;
+  incomingChallenge: { username: string; elo: number } | null;
+  outgoingChallenge: string | null;
+  toasts: Toast[];
+  /** Messages de la partie en cours (remis à zéro à chaque nouvelle partie). */
+  chat: ChatLine[];
+  rematch: "none" | "offered" | "received";
 }
 
 const TOKEN_KEY = "chessy.token";
 
-function readToken(): string | undefined {
+export function readToken(): string | undefined {
   try {
     return localStorage.getItem(TOKEN_KEY) ?? undefined;
   } catch {
@@ -39,24 +66,34 @@ function readToken(): string | undefined {
   }
 }
 
-function writeToken(token: string) {
+function writeToken(token: string | null) {
   try {
-    localStorage.setItem(TOKEN_KEY, token);
+    if (token === null) localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, token);
   } catch {
     // Private mode: the player simply gets a fresh identity next visit.
   }
 }
 
+export const EMPTY_FRIENDS: FriendsSnapshot = { friends: [], incoming: [], outgoing: [] };
+
 const initial: AppState = {
   connection: "connecting",
   playerId: null,
+  account: null,
   deck: [],
   lobby: { type: "idle" },
   deckSelect: null,
   game: null,
   over: null,
   pendingReward: null,
-  toast: null,
+  friends: EMPTY_FRIENDS,
+  userResults: null,
+  incomingChallenge: null,
+  outgoingChallenge: null,
+  toasts: [],
+  chat: [],
+  rematch: "none",
 };
 
 const ERROR_TEXT: Record<string, string> = {
@@ -67,7 +104,40 @@ const ERROR_TEXT: Record<string, string> = {
   already_in_game: "Vous êtes déjà dans une partie.",
   invalid_deck: "Sélection de compétences invalide.",
   replaced: "Ce compte s'est connecté depuis un autre onglet.",
+  account_required: "Un compte est nécessaire pour cette action.",
 };
+
+/** Texte français d'une notice serveur. */
+export function noticeText(code: NoticeCode, username?: string): string {
+  const who = username ?? "Ce joueur";
+  switch (code) {
+    case "friend_request_received":
+      return `${who} vous a envoyé une demande d'ami.`;
+    case "friend_accepted":
+      return `${who} est maintenant votre ami.`;
+    case "friend_removed":
+      return `${who} a été retiré de vos amis.`;
+    case "challenge_declined":
+      return `${who} a refusé votre défi.`;
+    case "challenge_expired":
+      return "Le défi a expiré.";
+    case "challenge_cancelled":
+      return `${who} a annulé son défi.`;
+    case "user_not_found":
+      return "Joueur introuvable.";
+    case "already_friends":
+      return `${who} est déjà votre ami.`;
+    case "friend_offline":
+      return `${who} n'est pas en ligne.`;
+    case "friend_busy":
+      return `${who} est en pleine partie.`;
+    default:
+      return "Notification.";
+  }
+}
+
+const TOAST_MS = 4500;
+const CHALLENGE_MS = 60_000;
 
 export class Store {
   private state: AppState = initial;
@@ -76,6 +146,7 @@ export class Store {
   private retry = 0;
   private toastId = 0;
   private stopped = false;
+  private challengeTimer: ReturnType<typeof setTimeout> | null = null;
 
   getState = () => this.state;
 
@@ -90,11 +161,13 @@ export class Store {
   }
 
   private notify(text: string) {
-    this.set({ toast: { id: ++this.toastId, text } });
+    const id = ++this.toastId;
+    this.set({ toasts: [...this.state.toasts.slice(-3), { id, text }] });
+    setTimeout(() => this.dismissToast(id), TOAST_MS);
   }
 
-  dismissToast() {
-    this.set({ toast: null });
+  dismissToast(id?: number) {
+    this.set({ toasts: id === undefined ? [] : this.state.toasts.filter((t) => t.id !== id) });
   }
 
   connect() {
@@ -116,7 +189,7 @@ export class Store {
       if (this.socket !== socket || this.stopped || this.state.connection === "replaced") return;
       this.set({ connection: "closed" });
       const delay = Math.min(1000 * 2 ** this.retry++, 10000);
-      setTimeout(() => !this.stopped && this.connect(), delay);
+      setTimeout(() => !this.stopped && this.socket === socket && this.connect(), delay);
     };
   }
 
@@ -127,32 +200,163 @@ export class Store {
     socket?.close();
   }
 
+  /** Ferme la socket courante et en ouvre une nouvelle (le `hello` reprend le jeton stocké). */
+  private reconnect() {
+    const old = this.socket;
+    this.socket = null;
+    old?.close();
+    this.set({
+      connection: "connecting",
+      account: null,
+      friends: EMPTY_FRIENDS,
+      userResults: null,
+      incomingChallenge: null,
+      outgoingChallenge: null,
+      lobby: { type: "idle" },
+      deckSelect: null,
+      game: null,
+      over: null,
+      chat: [],
+      rematch: "none",
+    });
+    this.connect();
+  }
+
   send(msg: ClientMsg) {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(msg));
   }
 
+  /** Après une connexion ou une inscription : mémorise le jeton puis reconnecte la WebSocket. */
+  applyAuth(token: string) {
+    writeToken(token);
+    this.reconnect();
+  }
+
+  /** Déconnexion : invalide la session côté serveur, efface le jeton et repart en invité. */
+  async logout() {
+    const token = readToken();
+    writeToken(null);
+    if (token) {
+      try {
+        await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+      } catch {
+        // Hors ligne : la session expirera côté serveur, le client repart en invité quand même.
+      }
+    }
+    this.reconnect();
+  }
+
   /** Leaves a finished game and returns to the lobby. */
   leaveGame() {
-    this.set({ game: null, over: null, deckSelect: null });
+    this.set({ game: null, over: null, deckSelect: null, rematch: "none" });
+  }
+
+  // ---- raccourcis d'actions -------------------------------------------------
+
+  offerDraw() {
+    this.send({ type: "offer_draw" });
+    if (this.state.game) this.set({ game: { ...this.state.game, draw_offer: "you" } });
+  }
+
+  respondDraw(accept: boolean) {
+    this.send({ type: "respond_draw", accept });
+    if (this.state.game) this.set({ game: { ...this.state.game, draw_offer: "none" } });
+  }
+
+  requestRematch() {
+    this.send({ type: "rematch_request" });
+    this.set({ rematch: "offered" });
+  }
+
+  respondRematch(accept: boolean) {
+    this.send({ type: "rematch_respond", accept });
+    this.set({ rematch: accept ? this.state.rematch : "none" });
+  }
+
+  respondChallenge(accept: boolean) {
+    const challenge = this.state.incomingChallenge;
+    if (!challenge) return;
+    this.send({ type: "challenge_respond", username: challenge.username, accept });
+    this.clearIncoming();
+  }
+
+  cancelChallenge() {
+    this.send({ type: "challenge_cancel" });
+    this.set({ outgoingChallenge: null });
+  }
+
+  private clearIncoming() {
+    if (this.challengeTimer) clearTimeout(this.challengeTimer);
+    this.challengeTimer = null;
+    this.set({ incomingChallenge: null });
   }
 
   receive(msg: ServerMsg) {
     switch (msg.type) {
       case "welcome":
+        // Un jeton invalide est remplacé par un nouveau : on le garde pour la prochaine visite.
         writeToken(msg.token);
         this.set({
           connection: "open",
           playerId: msg.player_id,
+          account: msg.account ?? null,
           deck: msg.deck,
           pendingReward: msg.pending_reward,
         });
+        break;
+      case "friends": {
+        const { type: _type, ...friends } = msg;
+        this.set({ friends });
+        break;
+      }
+      case "user_results":
+        this.set({ userResults: { query: msg.query, users: msg.users } });
+        break;
+      case "notice":
+        if (msg.code === "challenge_declined" || msg.code === "challenge_expired") this.set({ outgoingChallenge: null });
+        if (msg.code === "challenge_cancelled" || msg.code === "challenge_expired") this.clearIncoming();
+        this.notify(noticeText(msg.code, msg.username));
+        break;
+      case "challenge_received":
+        if (this.challengeTimer) clearTimeout(this.challengeTimer);
+        this.challengeTimer = setTimeout(() => this.clearIncoming(), CHALLENGE_MS);
+        this.set({ incomingChallenge: msg.from });
+        break;
+      case "challenge_sent":
+        this.set({ outgoingChallenge: msg.username });
+        break;
+      case "draw_offered":
+        if (this.state.game) this.set({ game: { ...this.state.game, draw_offer: "them" } });
+        break;
+      case "draw_declined":
+        if (this.state.game) this.set({ game: { ...this.state.game, draw_offer: "none" } });
+        this.notify("Votre proposition de nulle a été refusée.");
+        break;
+      case "chat":
+        this.set({ chat: [...this.state.chat, { mine: msg.mine, text: msg.text }].slice(-60) });
+        break;
+      case "rematch_offered":
+        this.set({ rematch: "received" });
+        break;
+      case "rematch_declined":
+        this.set({ rematch: "none" });
+        this.notify("La revanche n'aura pas lieu.");
         break;
       case "lobby":
         this.set({ lobby: msg.status });
         break;
       case "deck_select": {
         const { type: _type, ...info } = msg;
-        this.set({ deckSelect: info, game: null, over: null, pendingReward: null });
+        this.clearIncoming();
+        this.set({
+          deckSelect: info,
+          game: null,
+          over: null,
+          pendingReward: null,
+          outgoingChallenge: null,
+          chat: [],
+          rematch: "none",
+        });
         break;
       }
       case "state": {
@@ -166,7 +370,12 @@ export class Store {
         }
         break;
       case "game_over":
-        this.set({ over: { outcome: msg.outcome, reward: msg.reward } });
+        this.set({
+          over: { outcome: msg.outcome, reward: msg.reward, rated: msg.rated, elo: msg.elo, reason: msg.reason },
+          // L'Elo affiché dans la barre de navigation suit la partie classée.
+          account:
+            this.state.account && msg.elo ? { ...this.state.account, elo: msg.elo.you_after } : this.state.account,
+        });
         break;
       case "deck_update":
         this.set({
@@ -176,7 +385,7 @@ export class Store {
         });
         break;
       case "game_cancelled":
-        this.set({ game: null, deckSelect: null, over: null });
+        this.set({ game: null, deckSelect: null, over: null, rematch: "none" });
         this.notify("La partie a été annulée.");
         break;
       case "error":

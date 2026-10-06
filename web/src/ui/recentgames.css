@@ -1,0 +1,32 @@
+.rg-list { list-style: none; margin: 0; padding: 0; }
+.rg-row {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+.rg-row:first-child { border-top: 0; }
+.rg-result {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Pas de vert : la victoire est en blanc plein, la défaite en rouge atténué, la nulle en gris. */
+.rg-result.win { color: var(--text); font-weight: 600; }
+.rg-result.loss { color: var(--danger); }
+.rg-main { display: grid; gap: 2px; min-width: 0; }
+.rg-opp { font-size: 14.5px; font-weight: 500; }
+.rg-opp a { text-decoration: none; border-bottom: 1px solid var(--line-3); }
+.rg-opp a:hover { border-bottom-color: var(--text); }
+.rg-meta { font-size: 12.5px; color: var(--muted); }
+.rg-side { display: flex; align-items: center; gap: 10px; }
+.rg-delta { font-size: 14px; min-width: 38px; text-align: right; }
+.rg-empty { font-size: 14px; padding: 18px 0; }
+@media (max-width: 560px) {
+  .rg-row { grid-template-columns: 1fr auto; }
+  .rg-result { grid-column: 1 / -1; }
+}

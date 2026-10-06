@@ -1,0 +1,36 @@
+/* Design B « Graphite » : jetons partagés. Ne pas redéfinir ailleurs. */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+:root {
+  --bg: #0e0f12;
+  --surface: #15171b;
+  --surface-2: #1b1e23;
+  --surface-3: #22262d;
+  --sunken: #101216;
+  --line: #262a31;
+  --line-2: #2f343c;
+  --line-3: #3b414b;
+  --text: #e9ebef;
+  --text-2: #c9ced6;
+  --muted: #8b919c;
+  --faint: #6f7580;
+  --accent: #8fb4ff;
+  --danger: #ee8272;
+  --warn: #eec06a;
+
+  --fam-attack: #ee8272;
+  --fam-defense: #5fd0a0;
+  --fam-mobility: #7aa2ff;
+  --fam-control: #b79cff;
+  --fam-create: #eec06a;
+
+  --font-sans: "Geist Variable", "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-glyph: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", sans-serif;
+
+  --radius-s: 8px;
+  --radius: 12px;
+  --radius-l: 16px;
+  color-scheme: dark;
+}

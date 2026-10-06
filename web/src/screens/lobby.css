@@ -1,0 +1,33 @@
+.lb-page { max-width: 1120px; margin: 0 auto; padding: 48px 24px 72px; }
+.lb-head { margin-bottom: 32px; }
+.lb-title { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.03em; line-height: 1.1; margin: 10px 0 10px; font-weight: 650; }
+.lb-sub { max-width: 560px; font-size: 15.5px; }
+.lb-grid { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 20px; align-items: start; }
+.lb-h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.lb-play { padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+.lb-main { width: 100%; height: 52px; font-size: 16px; }
+.lb-note { font-size: 13px; }
+.lb-sep { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 12px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .1em; }
+.lb-sep::before, .lb-sep::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.lb-join { display: flex; gap: 8px; }
+.lb-join .input { height: 48px; letter-spacing: .18em; text-transform: uppercase; }
+.lb-join .btn { flex: none; }
+.lb-nudge { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--sunken); font-size: 13.5px; color: var(--text-2); }
+.lb-nudge a { display: inline-flex; align-items: center; text-decoration: none; }
+
+.lb-wait { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.lb-wait-title { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.lb-code { font-size: 40px; font-weight: 600; letter-spacing: .28em; padding: 14px 18px; background: var(--sunken); border: 1px solid var(--line-2); border-radius: var(--radius); }
+.lb-timer { font-size: 22px; color: var(--text-2); }
+.lb-bar { width: 100%; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; position: relative; }
+.lb-bar i { position: absolute; inset: 0 auto 0 0; width: 34%; background: var(--text); border-radius: 2px; animation: lb-slide 1.6s ease-in-out infinite; }
+@keyframes lb-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+
+.lb-deck { padding: 22px; }
+.lb-deck-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+.lb-slots { list-style: none; margin: 0 0 16px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
+
+@media (max-width: 860px) {
+  .lb-grid { grid-template-columns: 1fr; }
+  .lb-page { padding: 28px 16px 56px; }
+}

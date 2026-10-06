@@ -5,6 +5,11 @@ import type { SkillTarget, StateView } from "./protocol";
 function view(partial: Partial<StateView>): StateView {
   return {
     game_id: "g",
+    clock: { white_ms: 600_000, black_ms: 600_000, running: "white" },
+    rated: false,
+    opponent: { username: null, elo: null, guest: true },
+    draw_offer: "none",
+    ply_count: 0,
     you: "white",
     ply: 0,
     to_move: "white",
@@ -63,6 +68,15 @@ describe("moving pieces", () => {
   it("ignores clicks when it is not your turn or the game is over", () => {
     expect(click({ ...v, to_move: "black" }, IDLE, 12).interaction).toEqual(IDLE);
     expect(click({ ...v, outcome: { type: "stalemate" } }, IDLE, 12).interaction).toEqual(IDLE);
+  });
+
+  it("ignores clicks after a timeout or an agreed draw", () => {
+    for (const outcome of [{ type: "timeout", winner: "black" }, { type: "draw_agreed" }] as const) {
+      const r = click({ ...v, outcome }, IDLE, 12);
+      expect(r.interaction).toEqual(IDLE);
+      expect(r.send).toBeUndefined();
+      expect(startSkill({ ...v, outcome, skill_options: [{ skill: "freeze", targets: [{ kind: "piece", square: 1 }] }] }, "freeze")).toEqual(IDLE);
+    }
   });
 });
 

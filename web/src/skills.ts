@@ -1,50 +1,24 @@
+import { skillEntry, type Family } from "./catalog";
 import type { SkillId } from "./protocol";
 
 export interface SkillInfo {
   name: string;
   unique: boolean;
   description: string;
+  family: Family;
+  implemented: boolean;
 }
 
-// Descriptions follow docs/skills.md.
-export const SKILLS: Record<SkillId, SkillInfo> = {
-  teleportation: {
-    name: "Teleportation",
-    unique: false,
-    description: "Déplace une de vos pièces vers n'importe quelle case vide, sans tenir compte des obstacles.",
-  },
-  imune: {
-    name: "Imune",
-    unique: false,
-    description: "Rend une de vos pièces (pas le roi) invulnérable pendant le prochain tour adverse.",
-  },
-  freeze: {
-    name: "Freeze",
-    unique: false,
-    description: "Empêche une pièce ennemie (pas le roi) de se déplacer pendant deux de ses tours.",
-  },
-  rollback: {
-    name: "Rollback",
-    unique: false,
-    description: "Ramène une de vos pièces (pas le roi) sur la case d'où elle vient, si elle est libre.",
-  },
-  clone: {
-    name: "Clone",
-    unique: false,
-    description: "Copie une de vos pièces (pas le roi) sur une case vide adjacente.",
-  },
-  destiny_swapper: {
-    name: "Destiny Swapper",
-    unique: false,
-    description: "Échange les positions de deux de vos pièces.",
-  },
-  remover: {
-    name: "Remover",
-    unique: true,
-    description: "Retire un pion adverse de l'échiquier, sauf si cela provoque un mat.",
-  },
-};
+/** Fiche d'une compétence (tolère les identifiants inconnus du client). */
+export function skillInfo(id: string): SkillInfo {
+  const { name, unique, description, family, implemented } = skillEntry(id);
+  return { name, unique, description, family, implemented };
+}
 
-export function skillName(id: SkillId): string {
-  return SKILLS[id]?.name ?? id;
+export const SKILLS: Record<SkillId, SkillInfo> = new Proxy({} as Record<SkillId, SkillInfo>, {
+  get: (_t, id) => (typeof id === "string" ? skillInfo(id) : undefined),
+});
+
+export function skillName(id: string): string {
+  return skillEntry(id).name;
 }

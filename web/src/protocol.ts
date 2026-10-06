@@ -61,6 +61,8 @@ export type Outcome =
   | { type: "ongoing" }
   | { type: "checkmate"; winner: Color }
   | { type: "resignation"; winner: Color }
+  | { type: "timeout"; winner: Color }
+  | { type: "draw_agreed" }
   | { type: "stalemate" }
   | { type: "fifty_moves" }
   | { type: "repetition" }
@@ -76,8 +78,25 @@ export interface SkillOptions {
   targets: SkillTarget[];
 }
 
+export interface Clock {
+  white_ms: number;
+  black_ms: number;
+  running: Color | null;
+}
+
+export interface OpponentInfo {
+  username: string | null;
+  elo: number | null;
+  guest: boolean;
+}
+
 export interface StateView {
   game_id: string;
+  clock: Clock;
+  rated: boolean;
+  opponent: OpponentInfo;
+  draw_offer: "none" | "you" | "them";
+  ply_count: number;
   you: Color;
   ply: number;
   to_move: Color;
@@ -101,11 +120,13 @@ export interface RewardOffer {
 
 export type LobbyStatus =
   | { type: "idle" }
-  | { type: "queued" }
+  | { type: "queued"; ranked: boolean }
   | { type: "room_waiting"; code: string };
 
 export interface DeckSelectInfo {
   game_id: string;
+  opponent: OpponentInfo;
+  rated: boolean;
   you: Color;
   deck: SkillId[];
   max_picks: number;
@@ -113,13 +134,120 @@ export interface DeckSelectInfo {
   submitted: boolean;
 }
 
+// ---- comptes, classement, amis (voir docs/spec-v2.md) ----
+
+export interface Me {
+  player_id: string;
+  username: string | null;
+  guest: boolean;
+  elo: number;
+  rank: number | null;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  username: string;
+  elo: number;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+export interface Leaderboard {
+  total: number;
+  entries: LeaderboardEntry[];
+}
+
+export interface RecentGame {
+  game_id: string;
+  opponent: string | null;
+  result: "win" | "loss" | "draw";
+  color: Color;
+  rated: boolean;
+  elo_delta: number | null;
+  reason: string;
+  at: string;
+}
+
+export interface PublicProfile {
+  username: string;
+  elo: number;
+  peak_elo: number;
+  rank: number | null;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  streak: number;
+  created_at: string;
+  history: { elo: number; at: string }[];
+  recent: RecentGame[];
+}
+
+export type Presence = "online" | "in_game" | "offline";
+
+export interface FriendInfo {
+  username: string;
+  elo: number;
+  presence: Presence;
+  last_seen: string | null;
+}
+
+export interface FriendsSnapshot {
+  friends: FriendInfo[];
+  incoming: { username: string; elo: number }[];
+  outgoing: { username: string }[];
+}
+
+export type Relation = "none" | "friend" | "incoming" | "outgoing" | "self";
+
+export interface UserResult {
+  username: string;
+  elo: number;
+  relation: Relation;
+}
+
+export type NoticeCode =
+  | "friend_request_received"
+  | "friend_accepted"
+  | "friend_removed"
+  | "challenge_declined"
+  | "challenge_expired"
+  | "challenge_cancelled"
+  | "user_not_found"
+  | "already_friends"
+  | "friend_offline"
+  | "friend_busy";
+
+export interface EloChange {
+  you_before: number;
+  you_after: number;
+  opp_before: number;
+  opp_after: number;
+}
+
 export type ServerMsg =
-  | { type: "welcome"; player_id: string; token: string; deck: SkillId[]; pending_reward: RewardOffer | null }
+  | { type: "welcome"; player_id: string; token: string; deck: SkillId[]; pending_reward: RewardOffer | null; account: Me }
+  | ({ type: "friends" } & FriendsSnapshot)
+  | { type: "user_results"; query: string; users: UserResult[] }
+  | { type: "notice"; code: NoticeCode; username?: string }
+  | { type: "challenge_received"; from: { username: string; elo: number } }
+  | { type: "challenge_sent"; username: string }
+  | { type: "draw_offered" }
+  | { type: "draw_declined" }
+  | { type: "chat"; text: string; mine: boolean }
+  | { type: "rematch_offered" }
+  | { type: "rematch_declined" }
   | { type: "lobby"; status: LobbyStatus }
   | ({ type: "deck_select" } & DeckSelectInfo)
   | ({ type: "state" } & StateView)
   | { type: "opponent_status"; connected: boolean }
-  | { type: "game_over"; outcome: Outcome; reward: RewardOffer | null }
+  | { type: "game_over"; outcome: Outcome; reward: RewardOffer | null; rated: boolean; elo: EloChange | null; reason: string }
   | { type: "deck_update"; deck: SkillId[]; gained: SkillId | null; lost: SkillId | null }
   | { type: "game_cancelled"; reason: string }
   | { type: "error"; code: string; message: string };
@@ -131,11 +259,24 @@ export type RewardChoice =
 
 export type ClientMsg =
   | { type: "hello"; token?: string }
-  | { type: "queue_join" }
+  | { type: "queue_join"; ranked?: boolean }
   | { type: "create_room" }
   | { type: "join_room"; code: string }
   | { type: "leave_lobby" }
   | { type: "select_deck"; skills: SkillId[] }
   | { type: "action"; action: Action }
   | { type: "resign" }
-  | { type: "reward_choice"; choice: RewardChoice };
+  | { type: "reward_choice"; choice: RewardChoice }
+  | { type: "friend_request"; username: string }
+  | { type: "friend_respond"; username: string; accept: boolean }
+  | { type: "friend_remove"; username: string }
+  | { type: "friends_list" }
+  | { type: "user_search"; query: string }
+  | { type: "challenge"; username: string }
+  | { type: "challenge_respond"; username: string; accept: boolean }
+  | { type: "challenge_cancel" }
+  | { type: "offer_draw" }
+  | { type: "respond_draw"; accept: boolean }
+  | { type: "chat"; text: string }
+  | { type: "rematch_request" }
+  | { type: "rematch_respond"; accept: boolean };

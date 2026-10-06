@@ -34,7 +34,7 @@ export function PhaserBoard({ view, highlights, onSquare }: Props) {
         parent: host.current!,
         width: BOARD_SIZE,
         height: BOARD_SIZE,
-        backgroundColor: "#1b1b1f",
+        backgroundColor: "#15171b",
         scene: boardScene,
         scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
       });
@@ -52,8 +52,12 @@ export function PhaserBoard({ view, highlights, onSquare }: Props) {
     };
   }, []);
 
-  useEffect(() => scene.current?.setView(view), [view]);
-  useEffect(() => scene.current?.setHighlights(highlights), [highlights]);
+  useEffect(() => {
+    scene.current?.setView(view);
+  }, [view]);
+  useEffect(() => {
+    scene.current?.setHighlights(highlights);
+  }, [highlights]);
 
-  return <div className="board-host" ref={host} />;
+  return <div className="gm-board-host" ref={host} role="img" aria-label="Échiquier" />;
 }

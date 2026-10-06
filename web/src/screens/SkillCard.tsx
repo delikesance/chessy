@@ -1,30 +1,74 @@
-import type { SkillId } from "../protocol";
-import { SKILLS } from "../skills";
+import type { CSSProperties } from "react";
+import { FAMILY_LABEL } from "../catalog";
+import { skillInfo } from "../skills";
+import { SkillArt } from "../ui/SkillArt";
 
 interface Props {
-  skill: SkillId;
+  skill: string;
   selected?: boolean;
+  /** Rang de sélection (1-3) affiché dans une étiquette blanche. */
+  order?: number;
   disabled?: boolean;
+  /** Compétence verrouillée : toujours incluse, hors quota. */
+  locked?: boolean;
   badge?: string;
+  /** Rend la carte comme un bouton radio (récompenses). */
+  radio?: boolean;
   onClick?: () => void;
 }
 
-export function SkillCard({ skill, selected, disabled, badge, onClick }: Props) {
-  const info = SKILLS[skill];
-  const classes = ["skill-card", info.unique ? "unique" : "", selected ? "selected" : ""].join(" ");
+/** Carte de compétence : illustration, nom, famille, description, liseré de famille. */
+export function SkillCard({ skill, selected, order, disabled, locked, badge, radio, onClick }: Props) {
+  const info = skillInfo(skill);
+  const style = { "--fam": `var(--fam-${info.family})` } as CSSProperties;
+  const classes = ["skc", selected ? "on" : "", locked ? "locked" : "", radio ? "radio" : ""].filter(Boolean).join(" ");
   const content = (
     <>
-      <span className="skill-name">
-        {info.name}
-        {info.unique && <em className="tag">unique</em>}
-        {badge && <em className="tag muted">{badge}</em>}
+      <span className="skc-art">
+        <SkillArt id={skill} size={46} />
       </span>
-      <span className="skill-desc">{info.description}</span>
+      <span className="skc-body">
+        <span className="skc-name">{info.name}</span>
+        <span className="skc-meta">
+          <span className="eyebrow">{FAMILY_LABEL[info.family]}</span>
+          {info.unique && <span className="tag">unique</span>}
+          {locked && (
+            <span className="tag skc-lock">
+              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" focusable="false">
+                <rect x="2" y="5.5" width="8" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.3" />
+                <path d="M4 5.5V4a2 2 0 014 0v1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+              </svg>
+              hors quota
+            </span>
+          )}
+          {badge && <span className="tag">{badge}</span>}
+        </span>
+        <span className="skc-desc">{info.description}</span>
+      </span>
+      {order !== undefined && (
+        <span className="skc-num" aria-hidden="true">
+          {order}
+        </span>
+      )}
+      {radio && <span className="skc-ring" aria-hidden="true" />}
     </>
   );
-  if (!onClick) return <div className={classes}>{content}</div>;
+  if (!onClick) {
+    return (
+      <div className={classes} style={style}>
+        {content}
+      </div>
+    );
+  }
   return (
-    <button type="button" className={classes} disabled={disabled} onClick={onClick} aria-pressed={selected}>
+    <button
+      type="button"
+      className={classes}
+      style={style}
+      disabled={disabled}
+      onClick={onClick}
+      {...(radio ? { role: "radio", "aria-checked": !!selected } : { "aria-pressed": !!selected })}
+    >
       {content}
     </button>
   );

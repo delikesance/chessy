@@ -1,0 +1,28 @@
+.dk-page { max-width: 1120px; margin: 0 auto; padding: 0 24px 64px; }
+.dk-top { height: 60px; display: flex; align-items: center; border-bottom: 1px solid var(--line); margin: 0 -24px 32px; padding: 0 24px; }
+.dk-head { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 22px; }
+.dk-title { font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -0.03em; margin: 8px 0 6px; font-weight: 650; }
+.dk-sub { max-width: 520px; font-size: 14.5px; }
+.dk-opp { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.dk-opp-txt { display: flex; flex-direction: column; min-width: 120px; }
+.dk-opp-name { font-weight: 600; }
+.dk-opp-meta { font-size: 12.5px; }
+.dk-timer { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
+.dk-timer-bar { flex: 1; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.dk-timer-bar i { display: block; height: 100%; width: 100%; background: var(--text); transform-origin: left; transition: transform 1s linear; }
+.dk-timer-bar i.urgent { background: var(--danger); }
+.dk-timer-num { font-size: 15px; color: var(--text-2); min-width: 40px; text-align: right; }
+.dk-timer-num.urgent { color: var(--danger); }
+.dk-sec-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+.dk-h2 { font-size: 15px; font-weight: 600; }
+.dk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.dk-unique { margin-top: 30px; }
+.dk-foot { position: sticky; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 32px; padding: 16px 0; background: linear-gradient(to top, var(--bg) 70%, transparent); }
+.dk-foot .btn { min-width: 200px; }
+.dk-wait { color: var(--text-2); }
+@media (max-width: 640px) {
+  .dk-page { padding: 0 16px 48px; }
+  .dk-top { margin: 0 -16px 24px; padding: 0 16px; }
+  .dk-grid { grid-template-columns: 1fr; }
+  .dk-foot { flex-direction: column; align-items: stretch; text-align: center; }
+}
