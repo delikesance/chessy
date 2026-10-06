@@ -25,7 +25,10 @@ import {
   premoveDragStart,
   premoveHighlights,
   premoveStillPossible,
-  resolvePremove,
+  queuePremove,
+  resolveQueue,
+  virtualView,
+  MAX_PREMOVES,
   type Premove,
   type PremoveClick,
 } from "../premove";
@@ -56,8 +59,12 @@ export function Game({ view }: { view: StateView }) {
   const [log, setLog] = useState<LogLine[]>([]);
   const [launch, setLaunch] = useState<Launch | null>(null);
   const [resultHidden, setResultHidden] = useState(false);
-  // Premove : un coup posé pendant le tour de l'adversaire (`failed` : il n'est plus jouable, clignote puis disparaît).
-  const [premove, setPremove] = useState<(Premove & { failed?: boolean }) | null>(null);
+  // Premoves : file de coups posés pendant le tour de l'adversaire, chacun sur la position virtuelle des précédents.
+  // `premoveFailed` : le premier n'est plus jouable, il clignote puis toute la file disparaît.
+  // `sent` : le premier premove vient de partir et la position réelle ne l'a pas encore rattrapé.
+  const [premoves, setPremoves] = useState<Premove[]>([]);
+  const [premoveFailed, setPremoveFailed] = useState(false);
+  const [sent, setSent] = useState<Premove | null>(null);
   const [premoveSel, setPremoveSel] = useState<Square | null>(null);
   const [premovePromo, setPremovePromo] = useState<PendingPromotion | null>(null);
   const theme = useTheme();
@@ -80,30 +87,40 @@ export function Game({ view }: { view: StateView }) {
     setPremovePromo(null);
   }, [view.game_id, action]);
 
-  // Premove : au début de notre tour, il part tout de suite s'il est légal, sinon il est abandonné en silence
-  // (léger clignotement et buzz discret). Il tombe aussi si la partie finit ou si sa pièce a disparu.
-  const premoveRef = useRef(premove);
-  premoveRef.current = premove;
+  // Premoves : au début de notre tour, le premier part tout de suite s'il est légal et les suivants attendent le
+  // prochain tour. S'il ne l'est pas, il clignote (léger buzz) et toute la file est abandonnée. La file tombe
+  // aussi si la partie finit ou si la pièce du prochain premove a disparu.
+  const premoveRef = useRef(premoves);
+  premoveRef.current = premoves;
+  const failedRef = useRef(premoveFailed);
+  failedRef.current = premoveFailed;
   const premoveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    setPremove(null);
+    setPremoves([]);
+    setPremoveFailed(false);
+    setSent(null);
   }, [view.game_id]);
   useEffect(() => {
-    const pm = premoveRef.current;
-    if (!pm || pm.failed) return;
+    setSent(null); // la position réelle a avancé : le premove parti est maintenant sur le plateau
+    const queue = premoveRef.current;
+    if (queue.length === 0 || failedRef.current) return;
     if (view.to_move === view.you && view.outcome.type === "ongoing") {
-      const r = resolvePremove(view, pm);
+      const r = resolveQueue(view, queue);
       if (r.action === "send") {
         store.send({ type: "action", action: { type: "move", ...r.move } });
-        setPremove(null);
-      } else {
+        setSent(queue[0]);
+        setPremoves(r.rest);
+      } else if (r.action === "fail") {
         sfx.play("illegal", { volume: 0.5 });
-        setPremove({ ...pm, failed: true });
+        setPremoveFailed(true);
         if (premoveTimer.current) clearTimeout(premoveTimer.current);
-        premoveTimer.current = setTimeout(() => setPremove(null), 480);
+        premoveTimer.current = setTimeout(() => {
+          setPremoves([]);
+          setPremoveFailed(false);
+        }, 480);
       }
-    } else if (!premoveStillPossible(view, pm)) {
-      setPremove(null);
+    } else if (!premoveStillPossible(view, queue[0])) {
+      setPremoves([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.game_id, action]);
@@ -150,28 +167,44 @@ export function Game({ view }: { view: StateView }) {
   const ended = over_ || over !== null;
   useEffect(() => {
     if (ended || !theme.premove) {
-      setPremove(null);
+      setPremoves([]);
+      setPremoveFailed(false);
+      setSent(null);
       setPremoveSel(null);
       setPremovePromo(null);
     }
   }, [ended, theme.premove]);
-  // Pendant le tour adverse (partie en cours), le plateau sert à poser un premove.
+  // Pendant le tour adverse (partie en cours), le plateau sert à poser des premoves.
   const premoving = !ended && premoveAllowed(view, theme.premove);
 
+  // Position virtuelle : la réelle avec tous les premoves appliqués (y compris celui qui vient de partir).
+  // Pendant le clignotement d'un échec, on revient à la position réelle.
+  const pending = useMemo(() => (premoveFailed ? [] : sent ? [sent, ...premoves] : premoves), [premoveFailed, sent, premoves]);
+  const vview = useMemo(() => virtualView(view, pending), [view, pending]);
+  const marks = useMemo(() => premoves.map((m, i) => ({ ...m, failed: premoveFailed && i === 0 })), [premoves, premoveFailed]);
+
   const cancelPremove = useCallback(() => {
-    setPremove(null);
+    setPremoves([]);
+    setPremoveFailed(false);
     setPremoveSel(null);
     setPremovePromo(null);
   }, []);
-  const applyPremoveClick = useCallback((r: PremoveClick) => {
-    setPremoveSel(r.selected);
-    if (r.cancel) setPremove(null);
-    if (r.set) {
-      setPremove(r.set);
-      sfx.play("ui_click");
+  const addPremove = useCallback((pm: Premove) => {
+    if (premoveRef.current.length >= MAX_PREMOVES) {
+      sfx.play("illegal", { volume: 0.5 });
+      return;
     }
-    if (r.promotion) setPremovePromo(r.promotion);
+    setPremoves((cur) => queuePremove(cur, pm));
+    sfx.play("ui_click");
   }, []);
+  const applyPremoveClick = useCallback(
+    (r: PremoveClick) => {
+      setPremoveSel(r.selected);
+      if (r.add) addPremove(r.add);
+      if (r.promotion) setPremovePromo(r.promotion);
+    },
+    [addPremove],
+  );
   const activeSkill = interaction.kind === "skill" ? interaction.skill : null;
 
   // Une compétence sans cible (Tornado, Wall, Mind Reading…) part tout de suite ; les autres arment le ciblage.
@@ -193,9 +226,10 @@ export function Game({ view }: { view: StateView }) {
         setInteraction(IDLE);
         setPromotion(null);
         setSpawn(null);
-        setPremove(null);
-        setPremoveSel(null);
-        setPremovePromo(null);
+        cancelPremove();
+      } else if (e.key === "Backspace") {
+        if (premoveRef.current.length > 0) e.preventDefault();
+        cancelPremove();
       } else if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const slot = view.my_skills[Number(e.key) - 1];
         if (slot && !slot.used && !promotion && !spawn) toggleSkill(slot.skill);
@@ -203,13 +237,13 @@ export function Game({ view }: { view: StateView }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view, toggleSkill, promotion, spawn]);
+  }, [view, toggleSkill, promotion, spawn, cancelPremove]);
 
   const onSquare = useCallback(
     (square: Square) => {
-      if (promotion || spawn || premovePromo) return;
+      if (promotion || spawn || premovePromo || sent) return;
       if (premoving) {
-        applyPremoveClick(premoveClick(view, premoveSel, square, theme.premove));
+        applyPremoveClick(premoveClick(vview, premoveSel, square, theme.premove));
         return;
       }
       if (clickRejected(view, interaction, square, theme.premove)) sfx.play("illegal", { volume: 0.6 });
@@ -219,16 +253,16 @@ export function Game({ view }: { view: StateView }) {
       if (result.spawn) setSpawn(result.spawn);
       if (result.send) store.send({ type: "action", action: result.send });
     },
-    [view, interaction, promotion, spawn, premovePromo, premoving, premoveSel, theme.premove, applyPremoveClick],
+    [view, vview, interaction, promotion, spawn, premovePromo, sent, premoving, premoveSel, theme.premove, applyPremoveClick],
   );
 
   // Glisser-déposer : un glisser est un clic sur la case de départ puis sur celle d'arrivée.
   const canDrag = useCallback(
     (square: Square) => {
-      if (promotion || spawn || premovePromo) return false;
-      return premoving ? premoveDragStart(view, square, theme.premove) : dragStart(view, interaction, square) !== null;
+      if (promotion || spawn || premovePromo || sent) return false;
+      return premoving ? premoveDragStart(vview, square, theme.premove) : dragStart(view, interaction, square) !== null;
     },
-    [view, interaction, promotion, spawn, premovePromo, premoving, theme.premove],
+    [view, vview, interaction, promotion, spawn, premovePromo, sent, premoving, theme.premove],
   );
   const onDragStart = useCallback(
     (square: Square) => {
@@ -249,12 +283,13 @@ export function Game({ view }: { view: StateView }) {
         } else if (to === from) {
           setPremoveSel(from);
         } else {
-          const r = premoveClick(view, from, to, theme.premove);
-          if (r.set || r.promotion) applyPremoveClick(r);
-          else {
-            setPremoveSel(null);
-            sfx.play("illegal", { volume: 0.6 });
+          const r = premoveClick(vview, from, to, theme.premove);
+          if (r.add || r.promotion) {
+            applyPremoveClick(r);
+            return r.add ? "snap" : "return"; // la pièce se pose sur sa case virtuelle
           }
+          setPremoveSel(null);
+          sfx.play("illegal", { volume: 0.6 });
         }
         return "return";
       }
@@ -269,7 +304,7 @@ export function Game({ view }: { view: StateView }) {
       if (d.rejected) sfx.play("illegal", { volume: 0.6 });
       return d.verdict;
     },
-    [view, interaction, premoving, theme.premove, applyPremoveClick],
+    [view, vview, interaction, premoving, theme.premove, applyPremoveClick],
   );
 
   const pickSpawn = useCallback(
@@ -290,8 +325,8 @@ export function Game({ view }: { view: StateView }) {
   }, [spawn]);
 
   const hl = useMemo(
-    () => (premoving ? premoveHighlights(view, premoveSel) : highlights(view, interaction)),
-    [view, interaction, premoving, premoveSel],
+    () => (premoving ? premoveHighlights(vview, premoveSel) : highlights(view, interaction)),
+    [view, vview, interaction, premoving, premoveSel],
   );
 
   const opp = view.opponent;
@@ -325,8 +360,8 @@ export function Game({ view }: { view: StateView }) {
     const waiting = isBot ? `${oppName} réfléchit…` : "Tour de l'adversaire…";
     hint = myTurn
       ? "À vous de jouer. Sélectionnez une pièce ou une compétence."
-      : premove && !premove.failed
-        ? `${waiting} Premove posé : il partira dès votre tour.`
+      : premoves.length > 0 && !premoveFailed
+        ? `${waiting} ${premoves.length} premove${premoves.length > 1 ? "s" : ""} en file.`
         : theme.premove
           ? `${waiting} Vous pouvez préparer un coup.`
           : waiting;
@@ -387,9 +422,9 @@ export function Game({ view }: { view: StateView }) {
                 Annuler
               </button>
             )}
-            {premove && !premove.failed && !over_ && (
+            {premoves.length > 0 && !premoveFailed && !over_ && (
               <button type="button" className="btn sm ghost gm-premove-x" onClick={cancelPremove}>
-                Annuler le premove
+                {premoves.length > 1 ? "Annuler les premoves" : "Annuler le premove"}
               </button>
             )}
             {over_ && resultHidden && (
@@ -403,13 +438,13 @@ export function Game({ view }: { view: StateView }) {
             <EvalBar view={view} />
             <div className="gm-board">
               <PhaserBoard
-                view={view}
+                view={vview}
                 highlights={hl}
                 onSquare={onSquare}
                 canDrag={canDrag}
                 onDragStart={onDragStart}
                 onDrop={onDrop}
-                premove={premove}
+                premove={marks}
                 onCancelPremove={cancelPremove}
               />
               {launch && <LaunchCard key={launch.key} skill={launch.skill} mine={launch.mine} />}
@@ -428,9 +463,8 @@ export function Game({ view }: { view: StateView }) {
                   options={premovePromo.options}
                   onCancel={cancelPremove}
                   onPick={(kind) => {
-                    setPremove({ from: premovePromo.from, to: premovePromo.to, promo: kind });
+                    addPremove({ from: premovePromo.from, to: premovePromo.to, promo: kind });
                     setPremovePromo(null);
-                    sfx.play("ui_click");
                   }}
                 />
               )}

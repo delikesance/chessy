@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import type { Highlights } from "../interaction";
 import type { Square, StateView } from "../protocol";
 import { getTheme, useTheme } from "../theme";
-import { BOARD_SIZE, BoardScene } from "./BoardScene";
+import { BOARD_SIZE, BoardScene, type PremoveMark } from "./BoardScene";
 
 interface Props {
   view: StateView;
@@ -15,8 +15,8 @@ interface Props {
   canDrag?: (square: Square) => boolean;
   onDragStart?: (square: Square) => void;
   onDrop?: (from: Square, to: Square | null) => "snap" | "return";
-  /** Premove en attente, dessiné sur le plateau. */
-  premove?: { from: Square; to: Square; failed?: boolean } | null;
+  /** File de premoves, dessinée sur le plateau (numérotée dans l'ordre). */
+  premove?: PremoveMark[] | null;
   onCancelPremove?: () => void;
 }
 
