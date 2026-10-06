@@ -2,20 +2,25 @@
 //!
 //! The hub is synchronous and never awaits, so it lives behind one mutex
 //! (see [`crate::app::App`]). Anything that must happen later is queued as a
-//! [`Timer`] for the caller to schedule.
+//! [`Timer`] for the caller to schedule. Friends, challenges, chat and
+//! rematches live in the `social` submodule.
+
+mod social;
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chessy_engine::{Action, Color, Game, Outcome, SkillId, SkillKind, SkillTarget};
 use rand::seq::{IndexedRandom, SliceRandom};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::protocol::*;
-use crate::store::{Store, StoreError};
+use crate::store::{reason_of, GameRecord, Store, StoreError};
 
 pub const MAX_DECK: usize = 7;
 pub const MAX_PICKS: usize = 3;
+/// A game shorter than this many plies is never rated.
+pub const MIN_RATED_PLIES: u32 = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct HubConfig {
@@ -23,6 +28,21 @@ pub struct HubConfig {
     pub reconnect_grace: Duration,
     /// How long players have to choose their skills.
     pub deck_select_time: Duration,
+    /// Time each player starts with.
+    pub clock_initial: Duration,
+    /// Time added after each action (move or skill).
+    pub clock_increment: Duration,
+    /// How often the ranked queue is re-examined while someone waits.
+    pub queue_sweep_interval: Duration,
+    /// Ranked matching: Elo gap allowed at once, how much it widens per
+    /// second of waiting, and its ceiling.
+    pub ranked_range_base: i32,
+    pub ranked_range_per_second: f64,
+    pub ranked_range_max: i32,
+    /// How long a friend challenge stays open.
+    pub challenge_ttl: Duration,
+    /// Minimum time between two chat messages from one player.
+    pub chat_interval: Duration,
 }
 
 impl Default for HubConfig {
@@ -30,7 +50,25 @@ impl Default for HubConfig {
         HubConfig {
             reconnect_grace: Duration::from_secs(60),
             deck_select_time: Duration::from_secs(60),
+            clock_initial: Duration::from_secs(600),
+            clock_increment: Duration::from_secs(3),
+            queue_sweep_interval: Duration::from_secs(3),
+            ranked_range_base: 100,
+            ranked_range_per_second: 25.0,
+            ranked_range_max: 800,
+            challenge_ttl: Duration::from_secs(60),
+            chat_interval: Duration::from_secs(1),
         }
+    }
+}
+
+impl HubConfig {
+    /// Largest Elo gap accepted between two ranked players when the older of
+    /// them has waited `wait`.
+    pub fn ranked_range(&self, wait: Duration) -> i32 {
+        let widened =
+            f64::from(self.ranked_range_base) + self.ranked_range_per_second * wait.as_secs_f64();
+        widened.min(f64::from(self.ranked_range_max)) as i32
     }
 }
 
@@ -44,6 +82,18 @@ pub enum Timer {
     DeckTimeout {
         game_id: String,
     },
+    /// `color` runs out of time unless the game has moved past `ply`.
+    Flag {
+        game_id: String,
+        color: Color,
+        ply: u32,
+    },
+    QueueSweep,
+    ChallengeExpire {
+        challenger: PlayerId,
+        target: PlayerId,
+        seq: u64,
+    },
 }
 
 struct Conn {
@@ -56,6 +106,43 @@ enum Phase {
     Playing { game: Box<Game> },
 }
 
+/// Each player's remaining time; only the side to move is running.
+struct Clock {
+    remaining: [Duration; 2],
+    since: Instant,
+    running: Option<Color>,
+}
+
+impl Clock {
+    fn left(&self, color: Color, now: Instant) -> Duration {
+        let left = self.remaining[color.index()];
+        if self.running == Some(color) {
+            left.saturating_sub(now.saturating_duration_since(self.since))
+        } else {
+            left
+        }
+    }
+
+    fn expired(&self, color: Color, now: Instant) -> bool {
+        self.running == Some(color) && self.left(color, now).is_zero()
+    }
+
+    /// `mover` has acted: charge their time, add the increment, hand over.
+    fn press(&mut self, mover: Color, now: Instant, increment: Duration, over: bool) {
+        self.remaining[mover.index()] = self.left(mover, now) + increment;
+        self.since = now;
+        self.running = if over { None } else { Some(mover.opposite()) };
+    }
+
+    fn view(&self, now: Instant) -> ClockView {
+        ClockView {
+            white_ms: self.left(Color::White, now).as_millis() as u64,
+            black_ms: self.left(Color::Black, now).as_millis() as u64,
+            running: self.running,
+        }
+    }
+}
+
 struct Session {
     /// Indexed by `Color::index()`.
     players: [PlayerId; 2],
@@ -63,6 +150,16 @@ struct Session {
     connected: [bool; 2],
     /// Bumped on every disconnect so stale forfeit timers can be ignored.
     epoch: [u64; 2],
+    /// Came from the ranked queue between two accounts; whether Elo really
+    /// moves also depends on how long the game lasts.
+    rated: bool,
+    /// Who plays each colour, as shown to the other side.
+    info: [OpponentInfo; 2],
+    started_unix: i64,
+    clock: Option<Clock>,
+    draw_offer: Option<Color>,
+    /// The ply at which each colour last offered a draw (one offer per ply).
+    last_offer_ply: [Option<u32>; 2],
 }
 
 impl Session {
@@ -77,17 +174,32 @@ struct PendingReward {
     loser: PlayerId,
 }
 
+struct QueueEntry {
+    player: PlayerId,
+    elo: i32,
+    since: Instant,
+}
+
 pub struct Hub {
     store: Store,
     config: HubConfig,
     conns: HashMap<PlayerId, Conn>,
     next_conn: u64,
     next_game: u64,
-    queue: VecDeque<PlayerId>,
+    /// Oldest first.
+    ranked_queue: Vec<QueueEntry>,
+    casual_queue: VecDeque<PlayerId>,
+    sweep_pending: bool,
     rooms: HashMap<String, PlayerId>,
     games: HashMap<String, Session>,
     player_game: HashMap<PlayerId, String>,
     rewards: HashMap<PlayerId, PendingReward>,
+    /// Open challenges by challenger.
+    challenges: HashMap<PlayerId, social::Challenge>,
+    next_challenge: u64,
+    /// Players who just finished a game and may still ask for a rematch.
+    rematches: HashMap<PlayerId, social::Rematch>,
+    last_chat: HashMap<PlayerId, Instant>,
     timers: Vec<(Duration, Timer)>,
 }
 
@@ -99,6 +211,13 @@ fn room_code() -> String {
         .collect()
 }
 
+fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 impl Hub {
     pub fn new(store: Store, config: HubConfig) -> Self {
         Hub {
@@ -107,11 +226,17 @@ impl Hub {
             conns: HashMap::new(),
             next_conn: 0,
             next_game: 0,
-            queue: VecDeque::new(),
+            ranked_queue: Vec::new(),
+            casual_queue: VecDeque::new(),
+            sweep_pending: false,
             rooms: HashMap::new(),
             games: HashMap::new(),
             player_game: HashMap::new(),
             rewards: HashMap::new(),
+            challenges: HashMap::new(),
+            next_challenge: 0,
+            rematches: HashMap::new(),
+            last_chat: HashMap::new(),
             timers: Vec::new(),
         }
     }
@@ -139,10 +264,27 @@ impl Hub {
         self.store.deck(player)
     }
 
+    /// What the opponent sees of `player`.
+    fn opponent_info(&self, player: &str) -> OpponentInfo {
+        match self.store.player_row(player) {
+            Ok(Some(row)) if row.username.is_some() => OpponentInfo {
+                username: row.username,
+                elo: Some(row.elo),
+                guest: false,
+            },
+            _ => OpponentInfo {
+                username: None,
+                elo: None,
+                guest: true,
+            },
+        }
+    }
+
     // ---- connections -----------------------------------------------------
 
     /// Registers a connection, replacing any previous one for the same player.
-    /// Returns the player id and the connection id used to ignore stale sockets.
+    /// `token` is a session token. Returns the player id and the connection
+    /// id used to ignore stale sockets.
     pub fn connect(
         &mut self,
         token: Option<String>,
@@ -164,10 +306,15 @@ impl Hub {
                 "this account connected from somewhere else",
             ));
         }
+        let _ = self.store.touch_last_seen(&id);
         let pending_reward = match self.rewards.get(&id) {
             Some(r) => self.offer_for(&id, &r.loser).ok(),
             None => None,
         };
+        let account = self
+            .store
+            .me(&id)?
+            .ok_or(StoreError::Invalid("player vanished"))?;
         self.send(
             &id,
             ServerMsg::Welcome {
@@ -175,9 +322,12 @@ impl Hub {
                 token,
                 deck: self.deck_of(&id)?,
                 pending_reward,
+                account,
             },
         );
+        self.push_friends(&id);
         self.resume(&id);
+        self.notify_presence(&id);
         Ok((id, conn_id))
     }
 
@@ -230,6 +380,8 @@ impl Hub {
                         max_picks: MAX_PICKS,
                         seconds: self.config.deck_select_time.as_secs(),
                         submitted: picks[color.index()].is_some(),
+                        opponent: session.info[color.opposite().index()].clone(),
+                        rated: session.rated,
                     },
                 );
             }
@@ -245,7 +397,16 @@ impl Hub {
             return;
         }
         self.conns.remove(player);
+        self.last_chat.remove(player);
         self.leave_lobby_silently(player);
+        self.drop_challenges(player);
+        self.drop_rematch(player, true);
+        let _ = self.store.touch_last_seen(player);
+        self.disconnect_from_game(player);
+        self.notify_presence(player);
+    }
+
+    fn disconnect_from_game(&mut self, player: &str) {
         let Some(game_id) = self.player_game.get(player).cloned() else {
             return;
         };
@@ -284,7 +445,7 @@ impl Hub {
                     return;
                 }
                 match session.phase {
-                    Phase::Playing { .. } => self.end_by_resignation(&game_id, color),
+                    Phase::Playing { .. } => self.end_by_resignation(&game_id, color, "disconnect"),
                     Phase::DeckSelect { .. } => self.cancel_session(&game_id, "opponent left"),
                 }
             }
@@ -308,14 +469,44 @@ impl Hub {
                 }
                 self.start_if_ready(&game_id);
             }
+            Timer::Flag {
+                game_id,
+                color,
+                ply,
+            } => {
+                let Some(Session {
+                    phase: Phase::Playing { game },
+                    ..
+                }) = self.games.get(&game_id)
+                else {
+                    return;
+                };
+                if game.outcome().is_over() || game.pos.ply != ply || game.side_to_move() != color {
+                    return;
+                }
+                self.end_by_timeout(&game_id, color);
+            }
+            Timer::QueueSweep => {
+                self.sweep_pending = false;
+                self.match_ranked();
+                self.ensure_sweep();
+            }
+            Timer::ChallengeExpire {
+                challenger,
+                target,
+                seq,
+            } => self.expire_challenge(&challenger, &target, seq),
         }
     }
 
     // ---- lobby -----------------------------------------------------------
 
     fn lobby_status(&self, player: &str) -> LobbyStatus {
-        if self.queue.iter().any(|p| p == player) {
-            return LobbyStatus::Queued;
+        if self.ranked_queue.iter().any(|e| e.player == player) {
+            return LobbyStatus::Queued { ranked: true };
+        }
+        if self.casual_queue.iter().any(|p| p == player) {
+            return LobbyStatus::Queued { ranked: false };
         }
         match self.rooms.iter().find(|(_, p)| *p == player) {
             Some((code, _)) => LobbyStatus::RoomWaiting { code: code.clone() },
@@ -324,37 +515,90 @@ impl Hub {
     }
 
     fn leave_lobby_silently(&mut self, player: &str) {
-        self.queue.retain(|p| p != player);
+        self.ranked_queue.retain(|e| e.player != player);
+        self.casual_queue.retain(|p| p != player);
         self.rooms.retain(|_, p| p != player);
     }
 
     /// Checks the player may start looking for a game; clears any unclaimed
-    /// reward (starting a new game forfeits it) and any previous lobby spot.
+    /// reward (starting a new game forfeits it), any rematch they were
+    /// weighing and any previous lobby spot.
     fn enter_lobby(&mut self, player: &str) -> bool {
         if self.player_game.contains_key(player) {
             self.fail(player, "already_in_game", "finish your current game first");
             return false;
         }
         self.rewards.remove(player);
+        self.drop_rematch(player, true);
         self.leave_lobby_silently(player);
         true
     }
 
-    pub fn queue_join(&mut self, player: &str) {
+    pub fn queue_join(&mut self, player: &str, ranked: Option<bool>) {
         if !self.enter_lobby(player) {
             return;
         }
-        match self.queue.pop_front() {
-            Some(other) => self.create_game(other, player.to_string()),
-            None => {
-                self.queue.push_back(player.to_string());
-                self.send(
-                    player,
-                    ServerMsg::Lobby {
-                        status: LobbyStatus::Queued,
-                    },
-                );
+        let account = match self.store.player_row(player) {
+            Ok(Some(row)) if row.username.is_some() => Some(row),
+            Ok(_) => None,
+            Err(e) => return self.internal_error(player, e),
+        };
+        match account {
+            Some(row) if ranked.unwrap_or(true) => {
+                self.ranked_queue.push(QueueEntry {
+                    player: player.to_string(),
+                    elo: row.elo,
+                    since: Instant::now(),
+                });
+                self.match_ranked();
+                self.ensure_sweep();
             }
+            _ => match self.casual_queue.pop_front() {
+                Some(other) => self.create_game(other, player.to_string(), false),
+                None => self.casual_queue.push_back(player.to_string()),
+            },
+        }
+        if self.player_game.contains_key(player) {
+            return; // matched straight away: deck_select is on its way
+        }
+        self.send(
+            player,
+            ServerMsg::Lobby {
+                status: self.lobby_status(player),
+            },
+        );
+    }
+
+    /// Repeatedly pairs the two waiting ranked players closest in Elo among
+    /// those whose gap is within the range the older one's wait has earned
+    /// (ties go to whoever has waited longest).
+    fn match_ranked(&mut self) {
+        let now = Instant::now();
+        loop {
+            let mut best: Option<(usize, usize, i32)> = None;
+            for (i, a) in self.ranked_queue.iter().enumerate() {
+                for (j, b) in self.ranked_queue.iter().enumerate().skip(i + 1) {
+                    let gap = (a.elo - b.elo).abs();
+                    let wait = now.saturating_duration_since(a.since.min(b.since));
+                    if gap <= self.config.ranked_range(wait) && best.is_none_or(|(_, _, g)| gap < g)
+                    {
+                        best = Some((i, j, gap));
+                    }
+                }
+            }
+            let Some((i, j, _)) = best else { return };
+            let second = self.ranked_queue.remove(j);
+            let first = self.ranked_queue.remove(i);
+            self.create_game(first.player, second.player, true);
+        }
+    }
+
+    /// Keeps a sweep timer running while anyone waits in the ranked queue.
+    fn ensure_sweep(&mut self) {
+        if !self.sweep_pending && !self.ranked_queue.is_empty() {
+            self.sweep_pending = true;
+            self.timers
+                .push((self.config.queue_sweep_interval, Timer::QueueSweep));
         }
     }
 
@@ -388,9 +632,8 @@ impl Hub {
             }
             Some(_) => {
                 let host = self.rooms.remove(&code).expect("room checked above");
-                self.rewards.remove(player);
                 self.leave_lobby_silently(player);
-                self.create_game(host, player.to_string());
+                self.create_game(host, player.to_string(), false);
             }
         }
     }
@@ -407,29 +650,53 @@ impl Hub {
 
     // ---- game setup ------------------------------------------------------
 
-    fn create_game(&mut self, a: PlayerId, b: PlayerId) {
+    /// Starts a game between two players with random colours.
+    fn create_game(&mut self, a: PlayerId, b: PlayerId, rated: bool) {
+        let (white, black) = if rand::random_bool(0.5) {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        self.start_session(white, black, rated);
+    }
+
+    /// Opens deck selection for two players, clearing whatever else they
+    /// were doing: lobby spots, challenges, rematches and unclaimed rewards.
+    fn start_session(&mut self, white: PlayerId, black: PlayerId, rated: bool) {
+        let pair = [white.clone(), black.clone()];
+        for player in &pair {
+            self.rewards.remove(player);
+            self.leave_lobby_silently(player);
+            self.drop_challenges(player);
+            if let Some(r) = self.rematches.get(player) {
+                // Rematching each other is not a departure.
+                let silent = pair.contains(&r.opponent);
+                self.drop_rematch(player, !silent);
+            }
+        }
         self.next_game += 1;
         let game_id = format!(
             "g{}-{:06x}",
             self.next_game,
             rand::random::<u32>() & 0xff_ffff
         );
-        let (white, black) = if rand::random_bool(0.5) {
-            (a, b)
-        } else {
-            (b, a)
-        };
         let connected = [
             self.conns.contains_key(&white),
             self.conns.contains_key(&black),
         ];
         let session = Session {
+            info: [self.opponent_info(&white), self.opponent_info(&black)],
             players: [white.clone(), black.clone()],
             phase: Phase::DeckSelect {
                 picks: [None, None],
             },
             connected,
             epoch: [0, 0],
+            rated,
+            started_unix: now_unix(),
+            clock: None,
+            draw_offer: None,
+            last_offer_ply: [None, None],
         };
         self.player_game.insert(white.clone(), game_id.clone());
         self.player_game.insert(black.clone(), game_id.clone());
@@ -440,8 +707,11 @@ impl Hub {
                 game_id: game_id.clone(),
             },
         ));
-        for player in [white, black] {
-            self.send_session_to(&game_id, &player);
+        for player in &pair {
+            self.send_session_to(&game_id, player);
+        }
+        for player in &pair {
+            self.notify_presence(player);
         }
     }
 
@@ -528,6 +798,19 @@ impl Hub {
         session.phase = Phase::Playing {
             game: Box::new(game),
         };
+        session.clock = Some(Clock {
+            remaining: [self.config.clock_initial; 2],
+            since: Instant::now(),
+            running: Some(Color::White),
+        });
+        self.timers.push((
+            self.config.clock_initial,
+            Timer::Flag {
+                game_id: game_id.to_string(),
+                color: Color::White,
+                ply: 0,
+            },
+        ));
         self.broadcast_state(game_id, Vec::new());
     }
 
@@ -550,6 +833,9 @@ impl Hub {
                 },
             );
         }
+        for player in &session.players {
+            self.notify_presence(player);
+        }
     }
 
     // ---- playing ---------------------------------------------------------
@@ -570,14 +856,40 @@ impl Hub {
         if game.side_to_move() != color {
             return self.fail(player, "not_your_turn", "it is not your turn");
         }
+        let now = Instant::now();
+        // The flag timer may be a moment behind: the clock has the last word.
+        if session
+            .clock
+            .as_ref()
+            .is_some_and(|c| c.expired(color, now))
+        {
+            return self.end_by_timeout(&game_id, color);
+        }
         let events = match game.apply(action) {
             Ok(events) => events,
             Err(_) => return self.fail(player, "illegal_action", "that action is not allowed"),
         };
         let outcome = game.outcome();
+        let ply = game.pos.ply;
+        session.draw_offer = None;
+        let mut next_flag = None;
+        if let Some(clock) = &mut session.clock {
+            clock.press(color, now, self.config.clock_increment, outcome.is_over());
+            next_flag = Some(clock.remaining[color.opposite().index()]);
+        }
+        if let (Some(delay), false) = (next_flag, outcome.is_over()) {
+            self.timers.push((
+                delay,
+                Timer::Flag {
+                    game_id: game_id.clone(),
+                    color: color.opposite(),
+                    ply,
+                },
+            ));
+        }
         self.broadcast_state(&game_id, events);
         if outcome.is_over() {
-            self.finish_game(&game_id, outcome);
+            self.finish_game(&game_id, outcome, reason_of(&outcome));
         }
     }
 
@@ -589,12 +901,12 @@ impl Hub {
             return;
         };
         match self.games.get(&game_id).map(|s| &s.phase) {
-            Some(Phase::Playing { .. }) => self.end_by_resignation(&game_id, color),
+            Some(Phase::Playing { .. }) => self.end_by_resignation(&game_id, color, "resignation"),
             _ => self.cancel_session(&game_id, "a player left before the game started"),
         }
     }
 
-    fn end_by_resignation(&mut self, game_id: &str, color: Color) {
+    fn end_by_resignation(&mut self, game_id: &str, color: Color, reason: &str) {
         let Some(Session {
             phase: Phase::Playing { game },
             ..
@@ -605,7 +917,99 @@ impl Hub {
         game.resign(color);
         let outcome = game.outcome();
         self.broadcast_state(game_id, Vec::new());
-        self.finish_game(game_id, outcome);
+        self.finish_game(game_id, outcome, reason);
+    }
+
+    /// `color` ran out of time.
+    fn end_by_timeout(&mut self, game_id: &str, color: Color) {
+        let Some(Session {
+            phase: Phase::Playing { game },
+            clock,
+            ..
+        }) = self.games.get_mut(game_id)
+        else {
+            return;
+        };
+        game.flag(color);
+        let outcome = game.outcome();
+        if let Some(clock) = clock {
+            clock.remaining[color.index()] = Duration::ZERO;
+            clock.running = None;
+        }
+        self.broadcast_state(game_id, Vec::new());
+        self.finish_game(game_id, outcome, "timeout");
+    }
+
+    pub fn offer_draw(&mut self, player: &str) {
+        let Some((game_id, color)) = self.playing_as(player) else {
+            return;
+        };
+        let Some(session) = self.games.get_mut(&game_id) else {
+            return;
+        };
+        let Phase::Playing { game } = &session.phase else {
+            return;
+        };
+        let ply = game.pos.ply;
+        match session.draw_offer {
+            // They already offered: offering back is accepting.
+            Some(by) if by != color => return self.respond_draw(player, true),
+            Some(_) => return self.fail(player, "draw_pending", "your offer is already open"),
+            None => {}
+        }
+        if session.last_offer_ply[color.index()] == Some(ply) {
+            return self.fail(
+                player,
+                "draw_already_offered",
+                "wait for a move before offering again",
+            );
+        }
+        session.draw_offer = Some(color);
+        session.last_offer_ply[color.index()] = Some(ply);
+        let opponent = session.players[color.opposite().index()].clone();
+        self.send(&opponent, ServerMsg::DrawOffered {});
+    }
+
+    pub fn respond_draw(&mut self, player: &str, accept: bool) {
+        let Some((game_id, color)) = self.playing_as(player) else {
+            return;
+        };
+        let Some(session) = self.games.get_mut(&game_id) else {
+            return;
+        };
+        if session.draw_offer != Some(color.opposite()) {
+            return self.fail(player, "no_draw_offer", "there is no draw offer to answer");
+        }
+        session.draw_offer = None;
+        if !accept {
+            let offerer = session.players[color.opposite().index()].clone();
+            return self.send(&offerer, ServerMsg::DrawDeclined {});
+        }
+        let Phase::Playing { game } = &mut session.phase else {
+            return;
+        };
+        game.agree_draw();
+        let outcome = game.outcome();
+        if let Some(clock) = &mut session.clock {
+            clock.running = None;
+        }
+        self.broadcast_state(&game_id, Vec::new());
+        self.finish_game(&game_id, outcome, "agreed_draw");
+    }
+
+    /// The player's running game and colour, or an error to them.
+    fn playing_as(&self, player: &str) -> Option<(String, Color)> {
+        let Some(game_id) = self.player_game.get(player).cloned() else {
+            self.fail(player, "not_in_game", "you are not in a game");
+            return None;
+        };
+        let session = self.games.get(&game_id)?;
+        if !matches!(session.phase, Phase::Playing { .. }) {
+            self.fail(player, "wrong_phase", "the game has not started yet");
+            return None;
+        }
+        let color = session.color_of(player)?;
+        Some((game_id, color))
     }
 
     fn broadcast_state(&self, game_id: &str, events: Vec<chessy_engine::Event>) {
@@ -626,17 +1030,35 @@ impl Hub {
 
     // ---- game end and rewards -------------------------------------------
 
-    fn finish_game(&mut self, game_id: &str, outcome: Outcome) {
+    fn finish_game(&mut self, game_id: &str, outcome: Outcome, reason: &str) {
         let Some(session) = self.games.remove(game_id) else {
             return;
         };
         for player in &session.players {
             self.player_game.remove(player);
         }
+        let plies = match &session.phase {
+            Phase::Playing { game } => game.pos.ply,
+            Phase::DeckSelect { .. } => 0,
+        };
         let [white, black] = &session.players;
-        if let Err(e) = self.store.record_game(game_id, white, black, &outcome) {
-            tracing::error!("could not record game {game_id}: {e}");
-        }
+        let record = GameRecord {
+            id: game_id,
+            white,
+            black,
+            outcome: &outcome,
+            reason,
+            plies,
+            rated: session.rated && plies >= MIN_RATED_PLIES,
+            started_unix: session.started_unix,
+        };
+        let change = match self.store.record_game(&record) {
+            Ok(change) => change,
+            Err(e) => {
+                tracing::error!("could not record game {game_id}: {e}");
+                None
+            }
+        };
         let winner = outcome.winner();
         for color in Color::BOTH {
             let player = &session.players[color.index()];
@@ -652,13 +1074,42 @@ impl Hub {
             } else {
                 None
             };
-            self.send(player, ServerMsg::GameOver { outcome, reward });
+            let elo = change.map(|c| match color {
+                Color::White => EloView {
+                    you_before: c.white_before,
+                    you_after: c.white_after,
+                    opp_before: c.black_before,
+                    opp_after: c.black_after,
+                },
+                Color::Black => EloView {
+                    you_before: c.black_before,
+                    you_after: c.black_after,
+                    opp_before: c.white_before,
+                    opp_after: c.white_after,
+                },
+            });
+            self.send(
+                player,
+                ServerMsg::GameOver {
+                    outcome,
+                    reward,
+                    rated: change.is_some(),
+                    elo,
+                    reason: reason.to_string(),
+                },
+            );
             self.send(
                 player,
                 ServerMsg::Lobby {
                     status: LobbyStatus::Idle,
                 },
             );
+        }
+        self.offer_rematch(&session.players, session.rated);
+        for player in &session.players {
+            self.notify_presence(player);
+            // Ratings changed: refresh what friends see.
+            self.push_friends(player);
         }
     }
 
@@ -817,6 +1268,23 @@ fn state_view(
         outcome: game.outcome(),
         events,
         opponent_connected: session.connected[you.opposite().index()],
+        clock: session
+            .clock
+            .as_ref()
+            .map(|c| c.view(Instant::now()))
+            .unwrap_or(ClockView {
+                white_ms: 0,
+                black_ms: 0,
+                running: None,
+            }),
+        rated: session.rated,
+        opponent: session.info[you.opposite().index()].clone(),
+        draw_offer: match session.draw_offer {
+            None => DrawOffer::None,
+            Some(by) if by == you => DrawOffer::You,
+            Some(_) => DrawOffer::Them,
+        },
+        ply_count: game.pos.ply,
     }
 }
 

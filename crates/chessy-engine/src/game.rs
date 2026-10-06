@@ -161,6 +161,22 @@ impl Game {
         }
     }
 
+    /// `color` ran out of time: the opponent wins.
+    pub fn flag(&mut self, color: Color) {
+        if !self.outcome.is_over() {
+            self.outcome = Outcome::Timeout {
+                winner: color.opposite(),
+            };
+        }
+    }
+
+    /// Both players agreed to a draw.
+    pub fn agree_draw(&mut self) {
+        if !self.outcome.is_over() {
+            self.outcome = Outcome::DrawAgreed;
+        }
+    }
+
     fn position_hash(&self) -> u64 {
         let mut h = std::hash::DefaultHasher::new();
         for p in &self.pos.board {

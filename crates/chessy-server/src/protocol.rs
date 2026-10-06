@@ -15,7 +15,11 @@ pub enum ClientMsg {
     Hello {
         token: Option<String>,
     },
-    QueueJoin,
+    /// `ranked` defaults to true for accounts and is forced to false for guests.
+    QueueJoin {
+        #[serde(default)]
+        ranked: Option<bool>,
+    },
     CreateRoom,
     JoinRoom {
         code: String,
@@ -32,6 +36,40 @@ pub enum ClientMsg {
     RewardChoice {
         choice: RewardChoice,
     },
+    OfferDraw,
+    RespondDraw {
+        accept: bool,
+    },
+    Chat {
+        text: String,
+    },
+    RematchRequest,
+    RematchRespond {
+        accept: bool,
+    },
+    // Social messages: accounts only.
+    FriendRequest {
+        username: String,
+    },
+    FriendRespond {
+        username: String,
+        accept: bool,
+    },
+    FriendRemove {
+        username: String,
+    },
+    FriendsList,
+    UserSearch {
+        query: String,
+    },
+    Challenge {
+        username: String,
+    },
+    ChallengeRespond {
+        username: String,
+        accept: bool,
+    },
+    ChallengeCancel,
 }
 
 /// What the winner takes. `replace` names the skill to drop when the deck is full.
@@ -54,8 +92,98 @@ pub enum RewardChoice {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LobbyStatus {
     Idle,
-    Queued,
+    Queued { ranked: bool },
     RoomWaiting { code: String },
+}
+
+/// The signed-in player (`GET /api/me`, `welcome.account`).
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct Me {
+    pub player_id: PlayerId,
+    pub username: Option<String>,
+    pub guest: bool,
+    pub elo: i32,
+    /// Rank among registered accounts; `None` for guests.
+    pub rank: Option<u32>,
+    pub games: u32,
+    pub wins: u32,
+    pub draws: u32,
+    pub losses: u32,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct OpponentInfo {
+    pub username: Option<String>,
+    pub elo: Option<i32>,
+    pub guest: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ClockView {
+    pub white_ms: u64,
+    pub black_ms: u64,
+    pub running: Option<Color>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DrawOffer {
+    None,
+    You,
+    Them,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct EloView {
+    pub you_before: i32,
+    pub you_after: i32,
+    pub opp_before: i32,
+    pub opp_after: i32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Presence {
+    Online,
+    InGame,
+    Offline,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FriendInfo {
+    pub username: String,
+    pub elo: i32,
+    pub presence: Presence,
+    pub last_seen: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct UserRef {
+    pub username: String,
+    pub elo: i32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NameRef {
+    pub username: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Relation {
+    None,
+    Friend,
+    Incoming,
+    Outgoing,
+    #[serde(rename = "self")]
+    SelfUser,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SearchResult {
+    pub username: String,
+    pub elo: i32,
+    pub relation: Relation,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -96,6 +224,11 @@ pub struct StateView {
     /// What the last action did, for animation. Empty on resume.
     pub events: Vec<Event>,
     pub opponent_connected: bool,
+    pub clock: ClockView,
+    pub rated: bool,
+    pub opponent: OpponentInfo,
+    pub draw_offer: DrawOffer,
+    pub ply_count: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -106,6 +239,7 @@ pub enum ServerMsg {
         token: String,
         deck: Vec<SkillId>,
         pending_reward: Option<RewardOffer>,
+        account: Me,
     },
     Lobby {
         status: LobbyStatus,
@@ -117,6 +251,8 @@ pub enum ServerMsg {
         max_picks: usize,
         seconds: u64,
         submitted: bool,
+        opponent: OpponentInfo,
+        rated: bool,
     },
     State(Box<StateView>),
     OpponentStatus {
@@ -125,6 +261,9 @@ pub enum ServerMsg {
     GameOver {
         outcome: Outcome,
         reward: Option<RewardOffer>,
+        rated: bool,
+        elo: Option<EloView>,
+        reason: String,
     },
     /// Your deck changed (reward applied, or you lost a skill).
     DeckUpdate {
@@ -139,9 +278,46 @@ pub enum ServerMsg {
         code: String,
         message: String,
     },
+    Friends {
+        friends: Vec<FriendInfo>,
+        incoming: Vec<UserRef>,
+        outgoing: Vec<NameRef>,
+    },
+    UserResults {
+        query: String,
+        users: Vec<SearchResult>,
+    },
+    /// A short event for a toast; `username` names the other party when relevant.
+    Notice {
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        username: Option<String>,
+    },
+    ChallengeReceived {
+        from: UserRef,
+    },
+    ChallengeSent {
+        username: String,
+    },
+    DrawOffered {},
+    DrawDeclined {},
+    Chat {
+        text: String,
+        mine: bool,
+    },
+    RematchOffered {},
+    RematchDeclined {},
 }
 
 impl ServerMsg {
+    pub fn notice(code: &str, username: Option<&str>) -> Self {
+        ServerMsg::Notice {
+            code: code.to_string(),
+            // Often an echo of what the client typed: keep it short.
+            username: username.map(|u| u.chars().take(32).collect()),
+        }
+    }
+
     pub fn error(code: &str, message: &str) -> Self {
         ServerMsg::Error {
             code: code.to_string(),

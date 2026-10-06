@@ -12,11 +12,16 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 async fn spawn_server() -> String {
-    let app = App::new(Store::open(":memory:").unwrap(), HubConfig::default());
+    spawn_server_with_store().await.0
+}
+
+async fn spawn_server_with_store() -> (String, Store) {
+    let store = Store::open(":memory:").unwrap();
+    let app = App::new(store.clone(), HubConfig::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router(app)).await.unwrap() });
-    format!("ws://{addr}/ws")
+    (format!("ws://{addr}/ws"), store)
 }
 
 async fn send(ws: &mut Socket, v: Value) {
@@ -100,4 +105,42 @@ async fn two_sockets_play_a_game_and_one_resigns() {
         json!({"type": "resignation", "winner": "white"})
     );
     assert!(over["reward"].is_object());
+}
+
+#[tokio::test]
+async fn accounts_use_session_tokens_and_guests_are_kept_out_of_social_features() {
+    let (url, store) = spawn_server_with_store().await;
+    let (_, token) = store.register("Wanda", "unused-hash", None).unwrap();
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    send(&mut ws, json!({"type": "hello", "token": token})).await;
+    let welcome = expect(&mut ws, "welcome").await;
+    assert_eq!(welcome["token"], token.as_str());
+    assert_eq!(welcome["account"]["username"], "Wanda");
+    assert_eq!(welcome["account"]["guest"], false);
+    let friends = expect(&mut ws, "friends").await;
+    assert_eq!(friends["friends"], json!([]));
+    send(&mut ws, json!({"type": "user_search", "query": "wa"})).await;
+    let found = expect(&mut ws, "user_results").await;
+    assert_eq!(found["users"][0]["relation"], "self");
+    send(&mut ws, json!({"type": "queue_join"})).await;
+    let lobby = expect(&mut ws, "lobby").await;
+    assert_eq!(lobby["status"], json!({"type": "queued", "ranked": true}));
+
+    let (mut guest, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    send(&mut guest, json!({"type": "hello"})).await;
+    let welcome = expect(&mut guest, "welcome").await;
+    assert_eq!(welcome["account"]["guest"], true);
+    send(
+        &mut guest,
+        json!({"type": "friend_request", "username": "Wanda"}),
+    )
+    .await;
+    assert_eq!(
+        expect(&mut guest, "error").await["code"],
+        "account_required"
+    );
+    send(&mut guest, json!({"type": "queue_join", "ranked": true})).await;
+    let lobby = expect(&mut guest, "lobby").await;
+    assert_eq!(lobby["status"]["ranked"], false);
 }

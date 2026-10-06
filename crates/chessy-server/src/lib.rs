@@ -1,6 +1,9 @@
+pub mod api;
 pub mod app;
+pub mod elo;
 pub mod hub;
 pub mod protocol;
+pub mod social;
 pub mod store;
 pub mod ws;
 
@@ -16,5 +19,6 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/healthz", get(|| async { "ok" }))
+        .nest("/api", api::routes())
         .with_state(app)
 }

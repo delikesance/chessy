@@ -11,13 +11,26 @@ use crate::store::{Store, StoreError};
 
 pub struct App {
     hub: Mutex<Hub>,
+    store: Store,
 }
 
 impl App {
     pub fn new(store: Store, config: HubConfig) -> Arc<Self> {
         Arc::new(App {
-            hub: Mutex::new(Hub::new(store, config)),
+            hub: Mutex::new(Hub::new(store.clone(), config)),
+            store,
         })
+    }
+
+    /// The database, for the REST API.
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// A player's account changed outside the WebSocket (e.g. a guest
+    /// registered); refreshes what a connected client sees.
+    pub fn account_changed(self: &Arc<Self>, player: &str) {
+        self.run(|hub| hub.push_friends(player));
     }
 
     /// Runs `f` on the hub, then schedules any timers it asked for.
@@ -73,7 +86,7 @@ impl App {
             }
             match msg {
                 ClientMsg::Hello { .. } => {}
-                ClientMsg::QueueJoin => hub.queue_join(player),
+                ClientMsg::QueueJoin { ranked } => hub.queue_join(player, ranked),
                 ClientMsg::CreateRoom => hub.create_room(player),
                 ClientMsg::JoinRoom { code } => hub.join_room(player, &code),
                 ClientMsg::LeaveLobby => hub.leave_lobby(player),
@@ -81,6 +94,23 @@ impl App {
                 ClientMsg::Action { action } => hub.action(player, action),
                 ClientMsg::Resign => hub.resign(player),
                 ClientMsg::RewardChoice { choice } => hub.reward_choice(player, choice),
+                ClientMsg::OfferDraw => hub.offer_draw(player),
+                ClientMsg::RespondDraw { accept } => hub.respond_draw(player, accept),
+                ClientMsg::Chat { text } => hub.chat(player, &text),
+                ClientMsg::RematchRequest => hub.rematch_request(player),
+                ClientMsg::RematchRespond { accept } => hub.rematch_respond(player, accept),
+                ClientMsg::FriendRequest { username } => hub.friend_request(player, &username),
+                ClientMsg::FriendRespond { username, accept } => {
+                    hub.friend_respond(player, &username, accept)
+                }
+                ClientMsg::FriendRemove { username } => hub.friend_remove(player, &username),
+                ClientMsg::FriendsList => hub.friends_list(player),
+                ClientMsg::UserSearch { query } => hub.user_search(player, &query),
+                ClientMsg::Challenge { username } => hub.challenge(player, &username),
+                ClientMsg::ChallengeRespond { username, accept } => {
+                    hub.challenge_respond(player, &username, accept)
+                }
+                ClientMsg::ChallengeCancel => hub.challenge_cancel(player),
             }
         });
     }

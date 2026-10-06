@@ -255,12 +255,22 @@ pub enum Event {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Outcome {
     Ongoing,
-    Checkmate { winner: Color },
-    Resignation { winner: Color },
+    Checkmate {
+        winner: Color,
+    },
+    Resignation {
+        winner: Color,
+    },
     Stalemate,
     FiftyMoves,
     Repetition,
     InsufficientMaterial,
+    /// `winner` still had time on the clock when the other side ran out.
+    Timeout {
+        winner: Color,
+    },
+    /// Both players accepted a draw offer.
+    DrawAgreed,
 }
 
 impl Outcome {
@@ -270,7 +280,9 @@ impl Outcome {
 
     pub fn winner(&self) -> Option<Color> {
         match self {
-            Outcome::Checkmate { winner } | Outcome::Resignation { winner } => Some(*winner),
+            Outcome::Checkmate { winner }
+            | Outcome::Resignation { winner }
+            | Outcome::Timeout { winner } => Some(*winner),
             _ => None,
         }
     }

@@ -122,6 +122,45 @@ fn resignation() {
 }
 
 #[test]
+fn timeout_and_agreed_draw() {
+    let mut g = Game::new(&[], &[]);
+    g.flag(Color::Black);
+    assert_eq!(
+        g.outcome(),
+        Outcome::Timeout {
+            winner: Color::White
+        }
+    );
+    assert_eq!(g.outcome().winner(), Some(Color::White));
+    // A finished game stays finished.
+    g.agree_draw();
+    g.resign(Color::White);
+    assert!(matches!(g.outcome(), Outcome::Timeout { .. }));
+    assert_eq!(
+        g.apply(Action::Move {
+            from: s("e2"),
+            to: s("e4"),
+            promo: None
+        }),
+        Err(RuleError::GameOver)
+    );
+
+    let mut d = Game::new(&[], &[]);
+    d.agree_draw();
+    assert_eq!(d.outcome(), Outcome::DrawAgreed);
+    assert!(d.outcome().is_over());
+    assert_eq!(d.outcome().winner(), None);
+    assert_eq!(
+        serde_json::to_value(d.outcome()).unwrap(),
+        serde_json::json!({"type": "draw_agreed"})
+    );
+    assert_eq!(
+        serde_json::to_value(g.outcome()).unwrap(),
+        serde_json::json!({"type": "timeout", "winner": "white"})
+    );
+}
+
+#[test]
 fn promotion_requires_a_piece_choice() {
     let mut g = game_from("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", &[], &[]);
     assert!(g

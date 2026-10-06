@@ -116,8 +116,8 @@ fn start_game_with(
     let mut b = Client::connect(app, None);
     store.set_deck(&a.id, decks[0]).unwrap();
     store.set_deck(&b.id, decks[1]).unwrap();
-    a.send(ClientMsg::QueueJoin);
-    b.send(ClientMsg::QueueJoin);
+    a.send(ClientMsg::QueueJoin { ranked: None });
+    b.send(ClientMsg::QueueJoin { ranked: None });
     a.color = serde_json::from_value(a.next("deck_select")["you"].clone()).ok();
     b.color = serde_json::from_value(b.next("deck_select")["you"].clone()).ok();
     assert_ne!(a.color, b.color);
@@ -233,8 +233,8 @@ async fn deck_selection_is_validated() {
             ],
         )
         .unwrap();
-    a.send(ClientMsg::QueueJoin);
-    b.send(ClientMsg::QueueJoin);
+    a.send(ClientMsg::QueueJoin { ranked: None });
+    b.send(ClientMsg::QueueJoin { ranked: None });
     let _ = a.next("deck_select");
 
     a.pick(&[SkillId::Rollback]);
@@ -272,8 +272,8 @@ async fn unique_skills_join_the_loadout_beyond_the_three() {
             ],
         )
         .unwrap();
-    a.send(ClientMsg::QueueJoin);
-    b.send(ClientMsg::QueueJoin);
+    a.send(ClientMsg::QueueJoin { ranked: None });
+    b.send(ClientMsg::QueueJoin { ranked: None });
     a.pick(&[SkillId::Teleportation, SkillId::Imune, SkillId::Freeze]);
     b.pick(&[]);
     let state = a.next("state");
@@ -556,7 +556,7 @@ async fn a_second_connection_replaces_the_first() {
     let _second = Client::connect(&app, Some(first.token.clone()));
     assert_eq!(first.next("error")["code"], "replaced");
     // The stale connection can no longer act, and its later disconnect is ignored.
-    first.send(ClientMsg::QueueJoin);
+    first.send(ClientMsg::QueueJoin { ranked: None });
     app.disconnect(&first.id, first.conn);
 }
 
@@ -593,18 +593,18 @@ async fn leaving_the_queue_and_dropping_out_of_it() {
     let (app, _) = new_app(HubConfig::default());
     let mut a = Client::connect(&app, None);
     let mut b = Client::connect(&app, None);
-    a.send(ClientMsg::QueueJoin);
+    a.send(ClientMsg::QueueJoin { ranked: None });
     assert_eq!(a.next("lobby")["status"]["type"], "queued");
     a.send(ClientMsg::LeaveLobby);
     assert_eq!(a.next("lobby")["status"]["type"], "idle");
-    b.send(ClientMsg::QueueJoin);
+    b.send(ClientMsg::QueueJoin { ranked: None });
     assert_eq!(
         b.next("lobby")["status"]["type"],
         "queued",
         "a left, so b waits"
     );
     app.disconnect(&b.id, b.conn);
-    a.send(ClientMsg::QueueJoin);
+    a.send(ClientMsg::QueueJoin { ranked: None });
     assert_eq!(
         a.next("lobby")["status"]["type"],
         "queued",
@@ -622,8 +622,8 @@ async fn deck_selection_times_out_with_automatic_picks() {
     let mut b = Client::connect(&app, None);
     store.set_deck(&a.id, DECK_A).unwrap();
     store.set_deck(&b.id, DECK_B).unwrap();
-    a.send(ClientMsg::QueueJoin);
-    b.send(ClientMsg::QueueJoin);
+    a.send(ClientMsg::QueueJoin { ranked: None });
+    b.send(ClientMsg::QueueJoin { ranked: None });
     let state = a.wait_for("state").await;
     assert_eq!(state["my_skills"].as_array().unwrap().len(), 3);
     let _ = b.wait_for("state").await;
