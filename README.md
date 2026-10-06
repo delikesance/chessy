@@ -12,7 +12,8 @@ Les règles des compétences sont décrites dans [docs/skills.md](docs/skills.md
 - **Social** : amis avec présence en temps réel, demandes, défis amicaux, recherche de joueurs.
 - **En partie** : horloges serveur (10 min + 3 s par action), proposition de nulle, chat avec phrases rapides,
   revanche, abandon, reprise de partie après déconnexion (60 s de grâce).
-- **Compétences** : 27 illustrées dans la collection ; 7 jouables pour l'instant (voir ci-dessous).
+- **Compétences** : les 27 sont jouables et illustrées (7 uniques, 20 classiques) ; règles dans [docs/skills.md](docs/skills.md) et [docs/spec-v3.md](docs/spec-v3.md).
+- **Mode Solo** : partie d'entraînement contre l'IA « Sage », niveau d'Elo réglable de 400 à 2800 (profondeur, erreurs et usage des compétences varient avec le niveau), avec ou sans compte, sans horloge ni Elo en jeu.
 - **Design B « Graphite »** : thème plat et sobre, plateau Phaser, carte de lancement des compétences.
 
 Le contrat serveur/client est décrit dans [docs/spec-v2.md](docs/spec-v2.md).
@@ -56,18 +57,13 @@ cargo test --release -p chessy-engine -- --ignored   # perft profond (4,8 M de n
 
 Le cahier des charges ne tranche pas tout ; voici les choix faits (faciles à changer dans le moteur) :
 
-- Chaque compétence est utilisable **une fois par partie**, et l'utiliser **consomme le tour**.
+- Chaque compétence est utilisable **une fois par partie** (Mind Reading : 3 fois) et **consomme le tour**, sauf
+  Mind Reading et Mind Control, après lesquelles on joue encore.
 - Un camp n'est **mat** que s'il ne peut ni jouer un coup légal ni utiliser une compétence
   (une compétence peut donc sauver d'un mat).
-- Imune, Freeze, Rollback et Clone ne ciblent pas les rois. Une pièce gelée ne donne pas échec.
+- Les compétences ne ciblent pas les rois (sauf Transposition et Destiny Swapper). Une pièce gelée ne donne pas échec.
 - Un nouveau joueur reçoit 3 compétences classiques au hasard ; un joueur qui n'en a plus reçoit
   une compétence classique au hasard.
 - Récompense « aléatoire » : le gagnant reçoit une compétence tirée au hasard dans le pool global
   (classiques qu'il n'a pas + uniques sans propriétaire) et le perdant en perd une au hasard.
 - Une compétence unique n'a qu'un seul propriétaire dans le monde (contrainte en base).
-
-## Compétences implémentées
-
-Teleportation, Imune, Freeze, Rollback, Clone, Destiny Swapper et l'unique **Remover**.
-Les autres compétences de [docs/skills.md](docs/skills.md) restent à faire : un fichier par
-compétence dans `crates/chessy-engine/src/skills/`, plus une ligne dans `skill()`.
