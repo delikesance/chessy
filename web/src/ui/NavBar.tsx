@@ -4,6 +4,7 @@ import { store, type AppState } from "../store";
 
 const TABS: { name: Route["name"]; label: string }[] = [
   { name: "home", label: "Jouer" },
+  { name: "live", label: "En direct" },
   { name: "ranking", label: "Classement" },
   { name: "friends", label: "Amis" },
   { name: "collection", label: "Collection" },
@@ -29,7 +30,7 @@ export function initialOf(name: string | null | undefined): string {
 export function NavBar({ state, route }: { state: AppState; route: Route["name"] }) {
   const { account, friends } = state;
   const pending = friends.incoming.length;
-  const activeTab = route === "profile" || route === "auth" ? null : route;
+  const activeTab = route === "watch" ? "live" : route === "profile" || route === "auth" || route === "games" || route === "replay" ? null : route;
 
   return (
     <header className="nav">
@@ -116,6 +117,9 @@ function UserMenu({ username, elo }: { username: string; elo: number }) {
             onClick={() => setOpen(false)}
           >
             Profil
+          </a>
+          <a role="menuitem" href={hrefFor({ name: "games" })} onClick={() => setOpen(false)}>
+            Mes parties
           </a>
           <button
             type="button"

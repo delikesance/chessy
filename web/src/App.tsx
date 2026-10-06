@@ -4,6 +4,8 @@ import { Auth } from "./screens/Auth";
 import { Collection } from "./screens/Collection";
 import { DeckSelect } from "./screens/DeckSelect";
 import { Friends } from "./screens/Friends";
+import { Games } from "./screens/Games";
+import { Live } from "./screens/Live";
 import { Lobby } from "./screens/Lobby";
 import { Profile } from "./screens/Profile";
 import { Ranking } from "./screens/Ranking";
@@ -16,6 +18,9 @@ import { Toasts } from "./ui/Toasts";
 
 // Phaser is large; only load it once a game starts.
 const Game = lazy(() => import("./screens/Game").then((m) => ({ default: m.Game })));
+// Replay et spectateur affichent aussi le plateau : même découpage.
+const Replay = lazy(() => import("./screens/Replay").then((m) => ({ default: m.Replay })));
+const Watch = lazy(() => import("./screens/Watch").then((m) => ({ default: m.Watch })));
 
 export function App() {
   const state = useAppState();
@@ -62,6 +67,26 @@ export function App() {
         break;
       case "collection":
         screen = <Collection />;
+        break;
+      case "live":
+        screen = <Live />;
+        break;
+      case "games":
+        screen = <Games />;
+        break;
+      case "watch":
+        screen = (
+          <Suspense fallback={<p className="page-center muted">Chargement de la partie…</p>}>
+            <Watch gameId={route.param ?? ""} />
+          </Suspense>
+        );
+        break;
+      case "replay":
+        screen = (
+          <Suspense fallback={<p className="page-center muted">Chargement du replay…</p>}>
+            <Replay gameId={route.param ?? ""} autoAnalyse={route.sub === "analyse"} />
+          </Suspense>
+        );
         break;
       default:
         screen = <Lobby state={state} />;
