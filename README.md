@@ -50,6 +50,40 @@ Les routes de l'API REST (`/api/...`) et la WebSocket (`/ws`) sont proxifiées p
 Variables d'environnement du serveur : `CHESSY_ADDR` (défaut `127.0.0.1:3000`),
 `CHESSY_DB` (défaut `chessy.sqlite`), `CHESSY_WEB_DIR` (défaut `web/dist`, servi s'il existe).
 
+## Lancer avec Docker
+
+L'image `ghcr.io/garder500/chessy` est construite par GitHub Actions
+([.github/workflows/docker.yml](.github/workflows/docker.yml)) : un build natif **amd64** et un build natif
+**arm64** (runner ARM de GitHub), fusionnés en une seule image multi-architecture. Le même tag fonctionne donc
+sur un PC, un serveur x86, un Raspberry Pi ou un Mac Apple Silicon. Tags : `latest` (branche `main`), `main`,
+`sha-<commit>` et `X.Y.Z` / `X.Y` pour les tags `vX.Y.Z`.
+
+```bash
+docker run -d --name chessy -p 3000:3000 -v chessy-data:/data ghcr.io/garder500/chessy:latest
+```
+
+Ouvrez <http://localhost:3000>. Les comptes, parties et classements sont dans la base SQLite du volume
+`chessy-data` (`/data/chessy.sqlite`) : ils survivent aux mises à jour de l'image.
+
+Avec Docker Compose ([docker-compose.yml](docker-compose.yml)) :
+
+```bash
+docker compose up -d          # télécharge l'image depuis ghcr.io
+docker compose up -d --build  # ou la construit localement
+docker compose pull && docker compose up -d   # mise à jour
+```
+
+Construire l'image soi-même : `docker build -t chessy .`
+
+Variables d'environnement de l'image : `CHESSY_ADDR` (défaut `0.0.0.0:3000`), `CHESSY_DB`
+(défaut `/data/chessy.sqlite`), `CHESSY_WEB_DIR` (défaut `/app/web`), `RUST_LOG` (défaut `chessy_server=info`).
+Pour exposer le jeu sur Internet, placez-le derrière un reverse proxy HTTPS qui laisse passer les WebSocket
+(`/ws`), ou utilisez un tunnel (`make tunnel`).
+
+Premier push : le paquet GHCR est créé privé. Pour le télécharger sans `docker login`, passez-le en public
+(GitHub → Packages → chessy → Package settings → Change visibility). Les runners ARM gratuits ne sont
+disponibles que pour les dépôts publics.
+
 ## Tests
 
 ```bash

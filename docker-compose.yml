@@ -1,0 +1,18 @@
+# Lancer : docker compose up -d   →   http://localhost:3000
+# Les comptes et les parties vivent dans le volume `chessy-data` (base SQLite).
+services:
+  chessy:
+    image: ghcr.io/garder500/chessy:latest
+    # Pour construire l'image localement plutôt que la télécharger :
+    #   docker compose up -d --build
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      RUST_LOG: chessy_server=info
+    volumes:
+      - chessy-data:/data
+    restart: unless-stopped
+
+volumes:
+  chessy-data:
