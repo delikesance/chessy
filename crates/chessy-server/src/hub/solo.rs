@@ -1,0 +1,240 @@
+//! Solo mode: a friendly game against the bot (see `docs/spec-v3.md` §5).
+//!
+//! The bot is one seat of an ordinary [`Session`]. It has no connection and no
+//! account: its `players` entry is a synthetic id (`bot:<game id>`) that never
+//! shows up in `conns`, `player_game` or the store, so every `send` to it is a
+//! no-op and no database lookup finds it. What makes the game Solo is
+//! `Session::solo`.
+//!
+//! The bot moves from a [`Timer::BotMove`] scheduled after every action that
+//! hands it the turn. The timer is handled by `App::fire`, which takes a
+//! snapshot with [`Hub::bot_job`], runs the search in `spawn_blocking` and
+//! comes back with [`Hub::apply_bot_move`]; a result for a game that has moved
+//! on (different `ply`, gone, over) is discarded.
+//!
+//! Solo games are never recorded: no `games` row (so no public history), no
+//! Elo, no reward.
+
+use std::time::Duration;
+
+use chessy_engine::ai::Strength;
+use chessy_engine::{Action, Color};
+
+use super::social::Rematch;
+use super::{Hub, Phase, Session, Timer};
+use crate::bot::{self, BotJob};
+use crate::protocol::*;
+use crate::store::reason_of;
+
+/// The bot's seat in a Solo session.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Solo {
+    pub bot: Color,
+    /// The level the player chose (400..=2800).
+    pub elo: i32,
+}
+
+/// What a rematch against the bot needs to remember.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SoloSetup {
+    pub elo: i32,
+    /// The colour the human had in the game that just ended.
+    pub human_color: Color,
+}
+
+impl Hub {
+    pub fn solo_start(&mut self, player: &str, elo: i64, color: SoloColor) {
+        if self.player_game.contains_key(player)
+            || !matches!(self.lobby_status(player), LobbyStatus::Idle)
+        {
+            return self.fail(player, "already_in_game", "finish your current game first");
+        }
+        if !bot::is_valid_elo(elo) {
+            return self.fail(
+                player,
+                "invalid_elo",
+                "the level must be between 400 and 2800",
+            );
+        }
+        let human = match color {
+            SoloColor::White => Color::White,
+            SoloColor::Black => Color::Black,
+            SoloColor::Random => {
+                if rand::random_bool(0.5) {
+                    Color::White
+                } else {
+                    Color::Black
+                }
+            }
+        };
+        self.start_solo(player, elo as i32, human);
+    }
+
+    /// Opens deck selection against a bot of level `elo`; `human` is the
+    /// player's colour.
+    fn start_solo(&mut self, player: &str, elo: i32, human: Color) {
+        let (white, black) = match human {
+            Color::White => (player.to_string(), String::new()),
+            Color::Black => (String::new(), player.to_string()),
+        };
+        let seat = Solo {
+            bot: human.opposite(),
+            elo,
+        };
+        self.open_session(white, black, false, Some(seat));
+    }
+
+    // ---- the bot's turn --------------------------------------------------
+
+    /// Plans the bot's move when it is its turn in a running Solo game.
+    pub(super) fn schedule_bot(&mut self, game_id: &str) {
+        let Some(Session {
+            phase: Phase::Playing { game },
+            solo: Some(solo),
+            ..
+        }) = self.games.get(game_id)
+        else {
+            return;
+        };
+        if game.outcome().is_over() || game.side_to_move() != solo.bot {
+            return;
+        }
+        let ply = game.pos.ply;
+        let min = self.config.bot_delay_min;
+        let span = self.config.bot_delay_max.saturating_sub(min).as_millis() as u64;
+        let extra = if span == 0 {
+            0
+        } else {
+            rand::random_range(0..=span)
+        };
+        self.timers.push((
+            min + Duration::from_millis(extra),
+            Timer::BotMove {
+                game_id: game_id.to_string(),
+                ply,
+            },
+        ));
+    }
+
+    /// A snapshot for the search, if the bot is still due to move at `ply`.
+    pub fn bot_job(&self, game_id: &str, ply: u32) -> Option<BotJob> {
+        let Some(Session {
+            phase: Phase::Playing { game },
+            solo: Some(solo),
+            ..
+        }) = self.games.get(game_id)
+        else {
+            return None;
+        };
+        if game.outcome().is_over() || game.pos.ply != ply || game.side_to_move() != solo.bot {
+            return None;
+        }
+        let strength = Strength::from_elo(solo.elo);
+        let max_think = Duration::from_millis(strength.think_ms).min(self.config.bot_think_max);
+        Some(BotJob {
+            game: (**game).clone(),
+            strength,
+            seed: bot::seed_for(game_id, ply),
+            max_think,
+        })
+    }
+
+    /// Plays the bot's answer, unless the game has moved on since the
+    /// snapshot (a different `ply`, finished or gone): then it is dropped.
+    pub fn apply_bot_move(&mut self, game_id: &str, ply: u32, action: Option<Action>) {
+        let Some(Session {
+            phase: Phase::Playing { game },
+            solo: Some(solo),
+            draw_offer,
+            ..
+        }) = self.games.get_mut(game_id)
+        else {
+            return;
+        };
+        if game.outcome().is_over() || game.pos.ply != ply || game.side_to_move() != solo.bot {
+            return;
+        }
+        // The AI only returns legal actions; if it ever did not, play any.
+        let events = match action.and_then(|a| game.apply(a).ok()) {
+            Some(events) => events,
+            None => {
+                let fallback = game
+                    .legal_actions()
+                    .into_iter()
+                    .find_map(|a| game.apply(a).ok());
+                match fallback {
+                    Some(events) => events,
+                    None => return,
+                }
+            }
+        };
+        *draw_offer = None;
+        let outcome = game.outcome();
+        self.broadcast_state(game_id, events);
+        if outcome.is_over() {
+            self.finish_game(game_id, outcome, reason_of(&outcome));
+        } else {
+            self.schedule_bot(game_id);
+        }
+    }
+
+    // ---- draws -----------------------------------------------------------
+
+    /// The player (`offerer`) offered a draw: the bot answers at once.
+    pub(super) fn solo_answer_draw(&mut self, game_id: &str, offerer: Color) {
+        let Some(Session {
+            phase: Phase::Playing { game },
+            solo: Some(solo),
+            draw_offer,
+            players,
+            ..
+        }) = self.games.get_mut(game_id)
+        else {
+            return;
+        };
+        let human = players[offerer.index()].clone();
+        let accept = bot::accepts_draw(
+            &game.pos,
+            solo.bot,
+            self.config.bot_draw_min_plies,
+            self.config.bot_draw_window,
+        );
+        *draw_offer = None;
+        if !accept {
+            return self.send(&human, ServerMsg::DrawDeclined {});
+        }
+        game.agree_draw();
+        let outcome = game.outcome();
+        self.broadcast_state(game_id, Vec::new());
+        self.finish_game(game_id, outcome, "agreed_draw");
+    }
+
+    // ---- rematch ---------------------------------------------------------
+
+    /// After a Solo game the player may ask for a rematch; the bot always agrees.
+    pub(super) fn offer_solo_rematch(&mut self, session: &Session) {
+        let Some(solo) = &session.solo else { return };
+        let human_color = solo.bot.opposite();
+        let human = session.players[human_color.index()].clone();
+        let bot_id = session.players[solo.bot.index()].clone();
+        self.rematches.insert(
+            human,
+            Rematch::against_bot(
+                bot_id,
+                SoloSetup {
+                    elo: solo.elo,
+                    human_color,
+                },
+            ),
+        );
+    }
+
+    /// Same level, colours swapped.
+    pub(super) fn start_solo_rematch(&mut self, player: &str, setup: SoloSetup) {
+        if self.player_game.contains_key(player) {
+            self.rematches.remove(player);
+            return self.fail(player, "no_rematch", "a rematch is not possible");
+        }
+        self.start_solo(player, setup.elo, setup.human_color.opposite());
+    }
+}

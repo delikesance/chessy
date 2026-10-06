@@ -6,6 +6,7 @@
 //! rematches live in the `social` submodule.
 
 mod social;
+mod solo;
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -43,6 +44,15 @@ pub struct HubConfig {
     pub challenge_ttl: Duration,
     /// Minimum time between two chat messages from one player.
     pub chat_interval: Duration,
+    /// Solo: the bot waits a random time in this range before it starts to think.
+    pub bot_delay_min: Duration,
+    pub bot_delay_max: Duration,
+    /// Solo: the longest the bot's search may run (its level asks for less at low Elo).
+    pub bot_think_max: Duration,
+    /// Solo: the bot accepts a draw offer only after this many actions...
+    pub bot_draw_min_plies: u32,
+    /// ...and when its evaluation is within this many centipawns of equal.
+    pub bot_draw_window: i32,
 }
 
 impl Default for HubConfig {
@@ -58,6 +68,11 @@ impl Default for HubConfig {
             ranked_range_max: 800,
             challenge_ttl: Duration::from_secs(60),
             chat_interval: Duration::from_secs(1),
+            bot_delay_min: Duration::from_millis(600),
+            bot_delay_max: Duration::from_millis(1400),
+            bot_think_max: Duration::from_secs(3),
+            bot_draw_min_plies: crate::bot::DRAW_MIN_PLIES,
+            bot_draw_window: crate::bot::DRAW_WINDOW,
         }
     }
 }
@@ -89,6 +104,12 @@ pub enum Timer {
         ply: u32,
     },
     QueueSweep,
+    /// The bot plays unless the game has moved past `ply`. Handled by
+    /// [`crate::app::App`], which runs the search off the hub lock.
+    BotMove {
+        game_id: String,
+        ply: u32,
+    },
     ChallengeExpire {
         challenger: PlayerId,
         target: PlayerId,
@@ -160,6 +181,9 @@ struct Session {
     draw_offer: Option<Color>,
     /// The ply at which each colour last offered a draw (one offer per ply).
     last_offer_ply: [Option<u32>; 2],
+    /// Set for a Solo game: one seat is the bot (its `players` entry is a
+    /// synthetic id that is never connected and has no account).
+    solo: Option<solo::Solo>,
 }
 
 impl Session {
@@ -271,11 +295,13 @@ impl Hub {
                 username: row.username,
                 elo: Some(row.elo),
                 guest: false,
+                bot: false,
             },
             _ => OpponentInfo {
                 username: None,
                 elo: None,
                 guest: true,
+                bot: false,
             },
         }
     }
@@ -486,6 +512,8 @@ impl Hub {
                 }
                 self.end_by_timeout(&game_id, color);
             }
+            // The app runs the bot's search off the lock (see `App::fire`).
+            Timer::BotMove { .. } => {}
             Timer::QueueSweep => {
                 self.sweep_pending = false;
                 self.match_ranked();
@@ -663,33 +691,62 @@ impl Hub {
     /// Opens deck selection for two players, clearing whatever else they
     /// were doing: lobby spots, challenges, rematches and unclaimed rewards.
     fn start_session(&mut self, white: PlayerId, black: PlayerId, rated: bool) {
-        let pair = [white.clone(), black.clone()];
-        for player in &pair {
-            self.rewards.remove(player);
-            self.leave_lobby_silently(player);
-            self.drop_challenges(player);
-            if let Some(r) = self.rematches.get(player) {
-                // Rematching each other is not a departure.
-                let silent = pair.contains(&r.opponent);
-                self.drop_rematch(player, !silent);
-            }
-        }
+        self.open_session(white, black, rated, None);
+    }
+
+    /// [`Self::start_session`], optionally against the bot: for a Solo game
+    /// the bot's seat in `white`/`black` is left empty and filled with a
+    /// synthetic id here. The bot has already chosen its skills.
+    fn open_session(
+        &mut self,
+        mut white: PlayerId,
+        mut black: PlayerId,
+        rated: bool,
+        solo: Option<solo::Solo>,
+    ) {
         self.next_game += 1;
         let game_id = format!(
             "g{}-{:06x}",
             self.next_game,
             rand::random::<u32>() & 0xff_ffff
         );
+        let mut seat_solo = None;
+        let mut picks = [None, None];
+        if let Some(seat) = solo {
+            let id = crate::bot::bot_id(&game_id);
+            match seat.bot {
+                Color::White => white = id,
+                Color::Black => black = id,
+            }
+            picks[seat.bot.index()] = Some(crate::bot::pick_deck());
+            seat_solo = Some(seat);
+        }
+        let pair = [white.clone(), black.clone()];
+        let humans: Vec<&PlayerId> = pair.iter().filter(|p| !crate::bot::is_bot_id(p)).collect();
+        for player in &humans {
+            self.rewards.remove(*player);
+            self.leave_lobby_silently(player);
+            self.drop_challenges(player);
+            if let Some(r) = self.rematches.get(*player) {
+                // Rematching each other is not a departure.
+                let silent = pair.contains(&r.opponent);
+                self.drop_rematch(player, !silent);
+            }
+        }
+        let info = |hub: &Hub, color: Color| match &seat_solo {
+            Some(s) if s.bot == color => crate::bot::info(s.elo),
+            _ => hub.opponent_info(&pair[color.index()]),
+        };
         let connected = [
-            self.conns.contains_key(&white),
-            self.conns.contains_key(&black),
+            seat_solo.as_ref().is_some_and(|s| s.bot == Color::White)
+                || self.conns.contains_key(&white),
+            seat_solo.as_ref().is_some_and(|s| s.bot == Color::Black)
+                || self.conns.contains_key(&black),
         ];
         let session = Session {
-            info: [self.opponent_info(&white), self.opponent_info(&black)],
+            info: [info(self, Color::White), info(self, Color::Black)],
             players: [white.clone(), black.clone()],
-            phase: Phase::DeckSelect {
-                picks: [None, None],
-            },
+            phase: Phase::DeckSelect { picks },
             connected,
             epoch: [0, 0],
             rated,
@@ -697,9 +754,11 @@ impl Hub {
             clock: None,
             draw_offer: None,
             last_offer_ply: [None, None],
+            solo: seat_solo,
         };
-        self.player_game.insert(white.clone(), game_id.clone());
-        self.player_game.insert(black.clone(), game_id.clone());
+        for player in &humans {
+            self.player_game.insert((*player).clone(), game_id.clone());
+        }
         self.games.insert(game_id.clone(), session);
         self.timers.push((
             self.config.deck_select_time,
@@ -707,10 +766,10 @@ impl Hub {
                 game_id: game_id.clone(),
             },
         ));
-        for player in &pair {
+        for player in &humans {
             self.send_session_to(&game_id, player);
         }
-        for player in &pair {
+        for player in &humans {
             self.notify_presence(player);
         }
     }
@@ -798,20 +857,24 @@ impl Hub {
         session.phase = Phase::Playing {
             game: Box::new(game),
         };
-        session.clock = Some(Clock {
-            remaining: [self.config.clock_initial; 2],
-            since: Instant::now(),
-            running: Some(Color::White),
-        });
-        self.timers.push((
-            self.config.clock_initial,
-            Timer::Flag {
-                game_id: game_id.to_string(),
-                color: Color::White,
-                ply: 0,
-            },
-        ));
+        // A Solo game has no clock.
+        if session.solo.is_none() {
+            session.clock = Some(Clock {
+                remaining: [self.config.clock_initial; 2],
+                since: Instant::now(),
+                running: Some(Color::White),
+            });
+            self.timers.push((
+                self.config.clock_initial,
+                Timer::Flag {
+                    game_id: game_id.to_string(),
+                    color: Color::White,
+                    ply: 0,
+                },
+            ));
+        }
         self.broadcast_state(game_id, Vec::new());
+        self.schedule_bot(game_id);
     }
 
     fn cancel_session(&mut self, game_id: &str, reason: &str) {
@@ -890,6 +953,8 @@ impl Hub {
         self.broadcast_state(&game_id, events);
         if outcome.is_over() {
             self.finish_game(&game_id, outcome, reason_of(&outcome));
+        } else {
+            self.schedule_bot(&game_id);
         }
     }
 
@@ -966,6 +1031,9 @@ impl Hub {
         }
         session.draw_offer = Some(color);
         session.last_offer_ply[color.index()] = Some(ply);
+        if session.solo.is_some() {
+            return self.solo_answer_draw(&game_id, color);
+        }
         let opponent = session.players[color.opposite().index()].clone();
         self.send(&opponent, ServerMsg::DrawOffered {});
     }
@@ -1052,17 +1120,23 @@ impl Hub {
             rated: session.rated && plies >= MIN_RATED_PLIES,
             started_unix: session.started_unix,
         };
-        let change = match self.store.record_game(&record) {
-            Ok(change) => change,
-            Err(e) => {
-                tracing::error!("could not record game {game_id}: {e}");
-                None
+        // Solo games are not recorded (see `solo`): no Elo, no public history.
+        let solo = session.solo.is_some();
+        let change = if solo {
+            None
+        } else {
+            match self.store.record_game(&record) {
+                Ok(change) => change,
+                Err(e) => {
+                    tracing::error!("could not record game {game_id}: {e}");
+                    None
+                }
             }
         };
         let winner = outcome.winner();
         for color in Color::BOTH {
             let player = &session.players[color.index()];
-            let reward = if Some(color) == winner {
+            let reward = if !solo && Some(color) == winner {
                 let loser = &session.players[color.opposite().index()];
                 self.rewards.insert(
                     player.clone(),
@@ -1105,7 +1179,11 @@ impl Hub {
                 },
             );
         }
-        self.offer_rematch(&session.players, session.rated);
+        if solo {
+            self.offer_solo_rematch(&session);
+        } else {
+            self.offer_rematch(&session.players, session.rated);
+        }
         for player in &session.players {
             self.notify_presence(player);
             // Ratings changed: refresh what friends see.
@@ -1277,6 +1355,7 @@ fn state_view(
                 black_ms: 0,
                 running: None,
             }),
+        clock_enabled: session.clock.is_some(),
         rated: session.rated,
         opponent: session.info[you.opposite().index()].clone(),
         draw_offer: match session.draw_offer {

@@ -70,6 +70,22 @@ pub enum ClientMsg {
         accept: bool,
     },
     ChallengeCancel,
+    /// Starts a friendly game against the bot. `elo` is 400..=2800.
+    SoloStart {
+        elo: i64,
+        #[serde(default)]
+        color: SoloColor,
+    },
+}
+
+/// Which side the human takes in a solo game.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SoloColor {
+    White,
+    Black,
+    #[default]
+    Random,
 }
 
 /// What the winner takes. `replace` names the skill to drop when the deck is full.
@@ -116,6 +132,9 @@ pub struct OpponentInfo {
     pub username: Option<String>,
     pub elo: Option<i32>,
     pub guest: bool,
+    /// The opponent is the Solo bot. Omitted (false) for people.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bot: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -225,6 +244,8 @@ pub struct StateView {
     pub events: Vec<Event>,
     pub opponent_connected: bool,
     pub clock: ClockView,
+    /// False when the game has no clock (Solo): `clock.running` is then null.
+    pub clock_enabled: bool,
     pub rated: bool,
     pub opponent: OpponentInfo,
     pub draw_offer: DrawOffer,

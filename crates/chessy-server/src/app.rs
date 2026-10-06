@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::bot;
 use crate::hub::{Hub, HubConfig, Timer};
 use crate::protocol::{ClientMsg, PlayerId, ServerMsg};
 use crate::store::{Store, StoreError};
@@ -106,12 +107,39 @@ impl App {
     // Not routed through the generic `run`: spawning from a generic function
     // that the spawned task calls again would recurse at the type level.
     fn fire(self: &Arc<Self>, timer: Timer) {
+        if let Timer::BotMove { game_id, ply } = timer {
+            return self.fire_bot(game_id, ply);
+        }
         let timers = {
             let mut hub = self.hub.lock().unwrap_or_else(|e| e.into_inner());
             hub.on_timer(timer);
             hub.take_timers()
         };
         self.schedule(timers);
+    }
+
+    /// The bot's turn: snapshot the game under the lock, search off it (the
+    /// hub never waits for a search), then play the answer if the game is
+    /// still where the snapshot left it.
+    fn fire_bot(self: &Arc<Self>, game_id: String, ply: u32) {
+        let job = {
+            let hub = self.hub.lock().unwrap_or_else(|e| e.into_inner());
+            hub.bot_job(&game_id, ply)
+        };
+        let Some(job) = job else { return };
+        let app = Arc::clone(self);
+        tokio::spawn(async move {
+            let action = tokio::task::spawn_blocking(move || bot::think(&job))
+                .await
+                .ok()
+                .flatten();
+            let timers = {
+                let mut hub = app.hub.lock().unwrap_or_else(|e| e.into_inner());
+                hub.apply_bot_move(&game_id, ply, action);
+                hub.take_timers()
+            };
+            app.schedule(timers);
+        });
     }
 
     pub fn connect(
@@ -160,6 +188,7 @@ impl App {
                     hub.challenge_respond(player, &username, accept)
                 }
                 ClientMsg::ChallengeCancel => hub.challenge_cancel(player),
+                ClientMsg::SoloStart { elo, color } => hub.solo_start(player, elo, color),
             }
         });
     }
