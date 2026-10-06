@@ -155,6 +155,58 @@ fn nobody_can_be_dropped_on_a_trapped_square() {
 }
 
 #[test]
+fn an_enemy_trap_does_not_rule_a_square_out_and_both_traps_stand() {
+    // The opponent's traps are secret, so they cannot change the targets.
+    let mut pos = Position::from_fen(KINGS).unwrap();
+    pos.traps.push(Trap {
+        square: s("e4"),
+        owner: Color::Black,
+    });
+    pos.traps.push(Trap {
+        square: s("a4"),
+        owner: Color::White,
+    });
+    let mut g = Game::from_position(pos, &[SkillId::Trap, SkillId::Trap], &[]);
+    assert!(can_skill(&g, SkillId::Trap, square("e4")), "enemy trap");
+    assert!(!can_skill(&g, SkillId::Trap, square("a4")), "own trap");
+    use_skill(&mut g, SkillId::Trap, square("e4"));
+    let on_e4: Vec<Color> = g
+        .pos
+        .traps
+        .iter()
+        .filter(|t| t.square == s("e4"))
+        .map(|t| t.owner)
+        .collect();
+    assert_eq!(on_e4.len(), 2);
+    // Each springs for the other side only.
+    mv(&mut g, "e8", "d8");
+    assert_eq!(g.pos.traps.len(), 3);
+}
+
+#[test]
+fn offered_actions_can_be_listed_on_another_position() {
+    // The server lists what a player may do on the board they see.
+    let mut pos = Position::from_fen("4k3/8/8/8/8/8/7K/r3R3 b - - 0 1").unwrap();
+    pos.traps.push(Trap {
+        square: s("c1"),
+        owner: Color::White,
+    });
+    let g = Game::from_position(pos.clone(), &[], &[]);
+    let take = Action::Move {
+        from: s("a1"),
+        to: s("e1"),
+        promo: None,
+    };
+    assert!(!g.legal_actions().contains(&take));
+    pos.traps.clear();
+    assert!(g.legal_actions_on(&pos).contains(&take));
+    assert!(g.is_legal_on(&pos, take));
+    // The real position still refuses it.
+    let mut real = g.clone();
+    assert!(real.apply(take).is_err());
+}
+
+#[test]
 fn a_trap_is_not_a_piece() {
     let mut g = game(KINGS, &[SkillId::Trap], &[]);
     use_skill(&mut g, SkillId::Trap, square("e4"));

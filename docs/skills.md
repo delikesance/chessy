@@ -41,7 +41,7 @@ Une compétence unique ne peut être disponible que dans un seul deck (global). 
 - **Freeze** — Empêche une pièce ennemie de se déplacer pendant deux tours.
 - **Terminator** — Crée une copie d'une pièce ennemie aléatoire avec toutes ses capacités pour un tour, placée au même endroit mais de votre côté du plateau. Si la case n'est pas disponible, l'opération est impossible.
 - **Destiny Swapper** — Échange les positions de deux pièces alliées.
-- **Trap Card** — Place un piège sur une case vide, qui immobilise la première pièce ennemie qui marche dessus pendant deux tours. Chaque mouvement est une suite de mouvements case par case : un piège sur le chemin immobilise la pièce sur la case du piège.
+- **Trap Card** — Place un piège sur une case vide, qui immobilise la première pièce ennemie qui marche dessus pendant deux tours. Chaque mouvement est une suite de mouvements case par case : un piège sur le chemin immobilise la pièce sur la case du piège. Seuls vos propres pièges excluent une case : un piège adverse (secret) ne change pas le choix, et deux pièges de camps opposés peuvent partager une case.
 - **The Bench** — Pendant un tour, la pièce est mise sur le banc (plus sur l'échiquier). Au retour, elle est placée sur la case libre la plus proche de son ancienne case.
 - **Force Field** — Appliqué sur une pièce : quand elle est mangée, l'attaquant est repoussé de deux cases maximum. La pièce mangée va au cimetière (pas invincible).
 - **Transposition** — Échange la position de deux pièces sur l'échiquier, sans engendrer d'échec.

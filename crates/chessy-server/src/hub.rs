@@ -61,6 +61,10 @@ pub struct HubConfig {
     /// Spectators of a game between people see it this much late (anti-cheat).
     /// Solo games are always shown live.
     pub spectator_delay: Duration,
+    /// Clock time charged for an action the player was offered but the real
+    /// position refuses (a hidden piece was in the way): trying moves at random
+    /// to find hidden pieces is not free. Games without a clock are not charged.
+    pub blocked_attempt_cost: Duration,
 }
 
 impl Default for HubConfig {
@@ -82,6 +86,7 @@ impl Default for HubConfig {
             bot_draw_min_plies: crate::bot::DRAW_MIN_PLIES,
             bot_draw_window: crate::bot::DRAW_WINDOW,
             spectator_delay: Duration::from_secs(30),
+            blocked_attempt_cost: Duration::from_secs(10),
         }
     }
 }
@@ -166,6 +171,12 @@ impl Clock {
         self.remaining[mover.index()] = self.left(mover, now) + increment;
         self.since = now;
         self.running = if over { None } else { Some(mover.opposite()) };
+    }
+
+    /// Takes `cost` off `color`'s time (they stay on the move).
+    fn charge(&mut self, color: Color, cost: Duration, now: Instant) {
+        self.remaining[color.index()] = self.left(color, now).saturating_sub(cost);
+        self.since = now;
     }
 
     fn view(&self, now: Instant) -> ClockView {
@@ -1066,10 +1077,20 @@ impl Hub {
         {
             return self.end_by_timeout(&game_id, color);
         }
-        let events = match game.apply(action) {
-            Ok(events) => events,
-            Err(_) => return self.fail(player, "illegal_action", "that action is not allowed"),
+        // What a player may do is decided on the board they see; the real one
+        // then judges it. Both refusals read the same.
+        let view_pos = {
+            let hidden = view::hidden_ids(&game.pos, color);
+            view::view_position(&game.pos, color, &hidden)
         };
+        if !game.is_legal_on(&view_pos, action) {
+            return self.fail(player, "illegal_action", "that action is not allowed");
+        }
+        let mut events = match game.apply(action) {
+            Ok(events) => events,
+            Err(_) => return self.blocked_attempt(player, &game_id, color),
+        };
+        view::mask_best_move(game, color, &mut events);
         session.recording.actions.push(action);
         let outcome = game.outcome();
         if game.side_to_move() == color && !outcome.is_over() {
@@ -1225,6 +1246,11 @@ impl Hub {
     }
 
     fn broadcast_state(&mut self, game_id: &str, events: Vec<chessy_engine::Event>) {
+        self.send_player_states(game_id, &events);
+        self.spectate_publish(game_id, events);
+    }
+
+    fn send_player_states(&self, game_id: &str, events: &[chessy_engine::Event]) {
         let Some(session) = self.games.get(game_id) else {
             return;
         };
@@ -1233,13 +1259,47 @@ impl Hub {
         };
         let spectators = self.watcher_count(game_id);
         for color in Color::BOTH {
-            let view = state_view(game_id, session, game, color, events.clone(), spectators);
+            let view = state_view(game_id, session, game, color, events.to_vec(), spectators);
             self.send(
                 &session.players[color.index()],
                 ServerMsg::State(Box::new(view)),
             );
         }
-        self.spectate_publish(game_id, events);
+    }
+
+    /// `color` played something the board they see allows but the real one
+    /// refuses: a hidden piece is in the way. They are told what they are told
+    /// for any refused action, and pay for the attempt with clock time (the
+    /// new clock goes out with a fresh state), so the refusal cannot be used to
+    /// scan the board for hidden pieces.
+    fn blocked_attempt(&mut self, player: &str, game_id: &str, color: Color) {
+        self.fail(player, "illegal_action", "that action is not allowed");
+        let cost = self.config.blocked_attempt_cost;
+        let now = Instant::now();
+        let Some(session) = self.games.get_mut(game_id) else {
+            return;
+        };
+        let Phase::Playing { game } = &session.phase else {
+            return;
+        };
+        let ply = game.pos.ply;
+        let Some(clock) = &mut session.clock else {
+            return;
+        };
+        clock.charge(color, cost, now);
+        let left = clock.remaining[color.index()];
+        if left.is_zero() {
+            return self.end_by_timeout(game_id, color);
+        }
+        self.timers.push((
+            left,
+            Timer::Flag {
+                game_id: game_id.to_string(),
+                color,
+                ply,
+            },
+        ));
+        self.send_player_states(game_id, &[]);
     }
 
     // ---- game end and rewards -------------------------------------------
@@ -1473,10 +1533,14 @@ fn state_view(
     events: Vec<chessy_engine::Event>,
     spectators: usize,
 ) -> StateView {
+    let hidden = view::hidden_ids(&game.pos, you);
     let mut moves = Vec::new();
     let mut skill_options: Vec<SkillOptions> = Vec::new();
     if game.side_to_move() == you {
-        for action in game.legal_actions() {
+        // Listed on the board the player sees, never on the real one: hidden
+        // pieces and traps would show in what is allowed (see `view`).
+        let seen = view::view_position(&game.pos, you, &hidden);
+        for action in game.legal_actions_on(&seen) {
             match action {
                 Action::Move { from, to, promo } => {
                     moves.push(chessy_engine::Move { from, to, promo })
@@ -1486,7 +1550,6 @@ fn state_view(
         }
     }
     let theirs = game.loadout(you.opposite());
-    let hidden = view::hidden_ids(&game.pos, you);
     StateView {
         game_id: game_id.to_string(),
         you,

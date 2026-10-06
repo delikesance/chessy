@@ -43,6 +43,17 @@ impl Loadout {
     }
 }
 
+/// Pairs are unordered; targets are generated with a < b.
+fn normalize(target: SkillTarget) -> SkillTarget {
+    match target {
+        SkillTarget::Pair { a, b } => SkillTarget::Pair {
+            a: a.min(b),
+            b: a.max(b),
+        },
+        other => other,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Game {
     pub pos: Position,
@@ -82,29 +93,59 @@ impl Game {
 
     /// Every action the side to move may take: moves plus unused skills.
     pub fn legal_actions(&self) -> Vec<Action> {
+        self.legal_actions_on(&self.pos)
+    }
+
+    /// The actions the side to move may take as far as `view` shows: `view` is
+    /// a position derived from the real one (the server removes what a player
+    /// cannot see) and it, not the real position, decides what is listed. The
+    /// loadouts and the outcome are the game's own, so the list is a function
+    /// of what the player knows, whatever the real position hides.
+    pub fn legal_actions_on(&self, view: &Position) -> Vec<Action> {
         if self.outcome.is_over() {
             return Vec::new();
         }
-        let mut actions: Vec<Action> = self
-            .pos
-            .legal_moves()
-            .into_iter()
-            .map(Action::from)
-            .collect();
-        actions.extend(self.legal_skill_actions());
+        let mut actions: Vec<Action> = view.legal_moves().into_iter().map(Action::from).collect();
+        actions.extend(self.legal_skill_actions_on(view));
         actions
     }
 
+    /// Whether `action` is one of [`Game::legal_actions_on`] for `view`.
+    pub fn is_legal_on(&self, view: &Position, action: Action) -> bool {
+        if self.outcome.is_over() {
+            return false;
+        }
+        match action {
+            Action::Move { from, to, promo } => {
+                view.legal_moves().contains(&Move { from, to, promo })
+            }
+            Action::Skill { skill: id, target } => {
+                let target = normalize(target);
+                let color = view.side;
+                self.loadouts[color.index()]
+                    .slots
+                    .iter()
+                    .any(|s| s.skill == id && !s.used)
+                    && skill(id).targets(view, color).contains(&target)
+                    && view.skill_is_legal(id, target)
+            }
+        }
+    }
+
     fn legal_skill_actions(&self) -> Vec<Action> {
-        let color = self.pos.side;
+        self.legal_skill_actions_on(&self.pos)
+    }
+
+    fn legal_skill_actions_on(&self, pos: &Position) -> Vec<Action> {
+        let color = pos.side;
         let mut out = Vec::new();
         for slot in self.loadouts[color.index()]
             .slots
             .iter()
             .filter(|s| !s.used)
         {
-            for target in skill(slot.skill).targets(&self.pos, color) {
-                if self.pos.skill_is_legal(slot.skill, target) {
+            for target in skill(slot.skill).targets(pos, color) {
+                if pos.skill_is_legal(slot.skill, target) {
                     out.push(Action::Skill {
                         skill: slot.skill,
                         target,
@@ -133,13 +174,7 @@ impl Game {
                 skill: id,
                 mut target,
             } => {
-                // Pairs are unordered; targets are generated with a < b.
-                if let SkillTarget::Pair { a, b } = target {
-                    target = SkillTarget::Pair {
-                        a: a.min(b),
-                        b: a.max(b),
-                    };
-                }
+                target = normalize(target);
                 let slot = self.loadouts[color.index()]
                     .slots
                     .iter()

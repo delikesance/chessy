@@ -5,13 +5,87 @@ use std::collections::HashSet;
 
 use chessy_engine::{
     ActiveEffect, Color, EffectKind, Event, Game, Loadout, Piece, PieceId, Position, SkillId,
-    SkillTarget, Square,
+    SkillTarget, Square, NEVER,
 };
 
 use crate::protocol::{SkillSlotView, TerrainView};
 
 /// Pieces of `viewer`'s opponent that `viewer` cannot see (Invisibility).
+///
+/// A hidden piece that gives check to the king of `viewer`, whose turn it is,
+/// is unmasked for as long as the check lasts: check is always announced, and
+/// the player has to see what attacks them to be able to answer it.
 pub(super) fn hidden_ids(pos: &Position, viewer: Color) -> HashSet<PieceId> {
+    let mut hidden = invisible_of(pos, viewer);
+    if !hidden.is_empty() && pos.side == viewer && pos.in_check(viewer) {
+        hidden.retain(|&id| !gives_check(pos, viewer, id));
+    }
+    hidden
+}
+
+/// Whether the enemy piece `id` alone attacks the king of `viewer`: every
+/// other enemy piece is frozen (frozen pieces attack nothing but still block).
+fn gives_check(pos: &Position, viewer: Color, id: PieceId) -> bool {
+    let mut probe = pos.clone();
+    let others: Vec<PieceId> = pos
+        .pieces(viewer.opposite())
+        .map(|(_, p)| p.id)
+        .filter(|&other| other != id)
+        .collect();
+    for other in others {
+        probe
+            .effects
+            .push(ActiveEffect::new(EffectKind::Frozen, other, NEVER));
+    }
+    probe.in_check(viewer)
+}
+
+/// The position `viewer` plays on: the real one minus what they cannot see,
+/// that is the `hidden` pieces (and what is attached to them) and the traps
+/// of the opponent. Legal moves and skill targets are listed on this position
+/// and a played action must be legal on it, so that nothing the player is
+/// offered depends on a secret; the real position only judges the outcome.
+pub(super) fn view_position(pos: &Position, viewer: Color, hidden: &HashSet<PieceId>) -> Position {
+    let mut view = pos.clone();
+    strip(&mut view, viewer, hidden);
+    view
+}
+
+fn strip(pos: &mut Position, viewer: Color, hidden: &HashSet<PieceId>) {
+    for square in pos.board.iter_mut() {
+        if square.is_some_and(|p| hidden.contains(&p.id)) {
+            *square = None;
+        }
+    }
+    pos.effects.retain(|e| !hidden.contains(&e.piece));
+    pos.benched.retain(|b| !hidden.contains(&b.piece.id));
+    pos.traps.retain(|t| t.owner == viewer);
+    // Canceller restores that earlier position: it holds the same secrets.
+    if let Some(snapshot) = &mut pos.last_skill_snapshot {
+        strip(&mut snapshot.position, viewer, hidden);
+    }
+}
+
+/// Mind Reading names the best move of the position the player sees: a
+/// search on the real one would point at hidden pieces and traps.
+pub(super) fn mask_best_move(game: &Game, mover: Color, events: &mut Vec<Event>) {
+    if !events.iter().any(|e| matches!(e, Event::BestMove { .. })) {
+        return;
+    }
+    let hidden = hidden_ids(&game.pos, mover);
+    let view = view_position(&game.pos, mover, &hidden);
+    let hint = chessy_engine::search::best_move(&view, 3);
+    events.retain(|e| !matches!(e, Event::BestMove { .. }));
+    if let Some(mv) = hint {
+        events.push(Event::BestMove {
+            from: mv.from,
+            to: mv.to,
+            promo: mv.promo,
+        });
+    }
+}
+
+fn invisible_of(pos: &Position, viewer: Color) -> HashSet<PieceId> {
     let mut hidden = HashSet::new();
     for e in &pos.effects {
         if e.kind != EffectKind::Invisible {
@@ -38,8 +112,9 @@ pub(super) fn hidden_ids(pos: &Position, viewer: Color) -> HashSet<PieceId> {
 
 /// Pieces a spectator cannot see: the invisible ones of both sides.
 pub(super) fn spectator_hidden(pos: &Position) -> HashSet<PieceId> {
-    let mut hidden = hidden_ids(pos, Color::White);
-    hidden.extend(hidden_ids(pos, Color::Black));
+    // A check never unmasks a piece for spectators: they act for nobody.
+    let mut hidden = invisible_of(pos, Color::White);
+    hidden.extend(invisible_of(pos, Color::Black));
     hidden
 }
 
@@ -194,4 +269,123 @@ pub(super) fn spectator_events(
 ) -> Vec<Event> {
     let once = events(all, Color::White, game, hidden);
     events(once, Color::Black, game, hidden)
+}
+
+#[cfg(test)]
+mod tests {
+    use chessy_engine::{parse_square, Action, Trap};
+
+    use super::*;
+
+    fn sq(name: &str) -> Square {
+        parse_square(name).unwrap()
+    }
+
+    fn hide(pos: &mut Position, at: &str) -> PieceId {
+        let id = pos.board[sq(at) as usize].expect("a piece to hide").id;
+        pos.effects
+            .push(ActiveEffect::new(EffectKind::Invisible, id, 99));
+        id
+    }
+
+    fn best(events: &[Event]) -> Option<(Square, Square)> {
+        events.iter().find_map(|e| match e {
+            Event::BestMove { from, to, .. } => Some((*from, *to)),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn mind_reading_does_not_point_at_a_hidden_piece() {
+        // White wins the black queen with exd5, but black hid it.
+        let mut pos = Position::from_fen("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1").unwrap();
+        hide(&mut pos, "d5");
+        let mut game = Game::from_position(pos, &[SkillId::Mind], &[]);
+        let mut events = game
+            .apply(Action::Skill {
+                skill: SkillId::Mind,
+                target: SkillTarget::None,
+            })
+            .unwrap();
+        assert_eq!(
+            best(&events),
+            Some((sq("e4"), sq("d5"))),
+            "the real best move"
+        );
+        mask_best_move(&game, Color::White, &mut events);
+        let hint = best(&events).expect("some hint");
+        assert_ne!(hint.1, sq("d5"), "{hint:?} points at the hidden queen");
+    }
+
+    #[test]
+    fn the_view_has_no_hidden_pieces_and_no_enemy_traps() {
+        let mut pos = Position::from_fen("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1").unwrap();
+        let queen = hide(&mut pos, "d5");
+        pos.traps.push(Trap {
+            square: sq("c4"),
+            owner: Color::Black,
+        });
+        pos.traps.push(Trap {
+            square: sq("g1"),
+            owner: Color::White,
+        });
+        let hidden = hidden_ids(&pos, Color::White);
+        assert!(hidden.contains(&queen));
+        let seen = view_position(&pos, Color::White, &hidden);
+        assert!(seen.board[sq("d5") as usize].is_none());
+        assert!(seen.effects.is_empty());
+        assert_eq!(seen.traps.len(), 1);
+        assert_eq!(seen.traps[0].owner, Color::White);
+        // Black sees its own queen and its own trap.
+        let hidden = hidden_ids(&pos, Color::Black);
+        assert!(hidden.is_empty());
+        let seen = view_position(&pos, Color::Black, &hidden);
+        assert!(seen.board[sq("d5") as usize].is_some());
+        assert_eq!(seen.traps.len(), 1);
+    }
+
+    #[test]
+    fn an_enemy_trap_is_not_visible_in_what_is_offered() {
+        // Black is in check from Re1; Rxe1 answers it, but a white trap on c1
+        // would stop the rook short. The list must not know about the trap.
+        let mut pos = Position::from_fen("4k3/8/8/8/8/8/7K/r3R3 b - - 0 1").unwrap();
+        pos.traps.push(Trap {
+            square: sq("c1"),
+            owner: Color::White,
+        });
+        let game = Game::from_position(pos, &[], &[]);
+        let take = Action::Move {
+            from: sq("a1"),
+            to: sq("e1"),
+            promo: None,
+        };
+        assert!(!game.legal_actions().contains(&take), "the real position");
+        let hidden = hidden_ids(&game.pos, Color::Black);
+        let seen = view_position(&game.pos, Color::Black, &hidden);
+        assert!(game.legal_actions_on(&seen).contains(&take));
+        assert!(game.is_legal_on(&seen, take));
+    }
+
+    #[test]
+    fn a_hidden_checker_is_unmasked_only_while_it_checks() {
+        // The white queen on h5 is hidden and checks the black king (black to move).
+        let mut pos = Position::from_fen("4k3/8/8/7Q/8/8/8/4K3 b - - 0 1").unwrap();
+        let queen = hide(&mut pos, "h5");
+        assert!(pos.in_check(Color::Black));
+        assert!(!hidden_ids(&pos, Color::Black).contains(&queen));
+        // Hidden pieces that do not give check stay hidden.
+        let mut quiet = Position::from_fen("4k3/8/8/8/8/Q7/8/4K3 b - - 0 1").unwrap();
+        let queen = hide(&mut quiet, "a3");
+        assert!(!quiet.in_check(Color::Black));
+        assert!(hidden_ids(&quiet, Color::Black).contains(&queen));
+        // Of two hidden pieces only the one that really checks is unmasked.
+        let mut pair = Position::from_fen("4k3/8/8/7Q/8/8/8/R3K3 b - - 0 1").unwrap();
+        let rook = hide(&mut pair, "a1");
+        let queen = hide(&mut pair, "h5");
+        let hidden = hidden_ids(&pair, Color::Black);
+        assert!(hidden.contains(&rook));
+        assert!(!hidden.contains(&queen));
+        // Spectators never get anything unmasked.
+        assert!(spectator_hidden(&pair).contains(&queen));
+    }
 }
