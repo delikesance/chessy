@@ -105,7 +105,10 @@ export function SoloCard({ state }: { state: Pick<AppState, "solo" | "soloPendin
         </div>
       </div>
 
-      <button type="button" className="btn lb-main" disabled={soloPending} onClick={() => store.startSolo(elo, color)}>
+      <button type="button" className="btn lb-main" disabled={soloPending} onClick={() => {
+          setDraft(String(elo));
+          store.startSolo(elo, color);
+        }}>
         {soloPending ? "Création de la partie…" : "Commencer"}
       </button>
       <p className="muted lb-note">Sans horloge, sans Elo en jeu, sans récompense. Aucun compte nécessaire.</p>
