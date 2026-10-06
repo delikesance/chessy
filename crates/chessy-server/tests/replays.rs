@@ -493,8 +493,17 @@ fn choose(state: &Value, n: usize) -> Value {
     } else {
         quiet
     };
-    let m = moves[(n * 5 + 1) % moves.len()];
+    let m = moves[(n * 5 + 3) % moves.len()];
     json!({"type": "move", "from": m["from"], "to": m["to"], "promo": m["promo"]})
+}
+
+/// The newest `state` the client has received, or `current` if none.
+fn newest(c: &mut Client, current: Value) -> Value {
+    let mut latest = current;
+    while let Some(state) = c.try_next("state") {
+        latest = state;
+    }
+    latest
 }
 
 struct Played {
@@ -525,8 +534,21 @@ fn play_script(white: &mut Client, black: &mut Client, actions: usize) -> Played
         let action = choose(if white_moves { &cur_w } else { &cur_b }, n);
         let mover: &Client = if white_moves { white } else { black };
         mover.say(json!({"type": "action", "action": action}));
-        cur_w = white.last("state");
-        cur_b = black.last("state");
+        // An offered action can be refused when a hidden piece is in the way
+        // (the only state sent then is the same position with a lower clock):
+        // nothing was played, try something else.
+        let refused = if white_moves {
+            &mut *white
+        } else {
+            &mut *black
+        }
+        .try_next("error")
+        .is_some();
+        cur_w = newest(white, cur_w);
+        cur_b = newest(black, cur_b);
+        if refused {
+            continue;
+        }
         played
             .actors
             .push(if white_moves { "white" } else { "black" }.into());

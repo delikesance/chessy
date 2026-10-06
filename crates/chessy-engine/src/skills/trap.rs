@@ -14,11 +14,15 @@ impl Skill for Trap {
     }
 
     fn targets(&self, pos: &Position, color: Color) -> Vec<SkillTarget> {
+        let mine = |s: Square| pos.traps.iter().any(|t| t.owner == color && t.square == s);
         if pos.traps.iter().filter(|t| t.owner == color).count() >= MAX_TRAPS {
             return Vec::new();
         }
+        // Only the player's own traps rule a square out: the opponent's are
+        // secret, so they must not change what can be targeted. Two traps of
+        // different owners can share a square; each springs for the other side.
         (0..64u8)
-            .filter(|&s| pos.board[s as usize].is_none() && !pos.trap_at(s))
+            .filter(|&s| pos.board[s as usize].is_none() && !mine(s))
             .map(|square| SkillTarget::Square { square })
             .collect()
     }
