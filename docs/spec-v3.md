@@ -102,6 +102,38 @@ Interpoler linéairement à l'intérieur d'une tranche. L'IA est **déterministe
 Usage des compétences : à chaque tour l'IA évalue chaque action `Skill` légale (résultat simulé, évalué après un coup de réponse adverse peu profond) et la joue si elle améliore l'évaluation d'au moins `T` centipions
 (`T` décroît avec l'Elo : 250 à 400, 60 à 2800), avec une probabilité d'usage croissante avec l'Elo ; elle ne joue jamais Mind Reading/Mind Control (inutiles pour elle).
 
+### Notes d'implémentation (Solo)
+
+Précisions et écarts, tels que livrés dans `crates/`.
+
+**Protocole**
+- `solo_start {elo, color}` : `elo` est lu comme entier signé ; hors 400..=2800 → `error invalid_elo`. `color` est facultatif (défaut `"random"`). `already_in_game` si le joueur est en partie **ou** en file/salle d'attente (le client doit d'abord faire `leave_lobby`). Un éventuel défi ouvert, une revanche ou une récompense non réclamée sont abandonnés comme pour toute nouvelle partie.
+- `OpponentInfo.bot` n'est sérialisé que lorsqu'il vaut `true` (absent = `false`), pour ne pas changer la forme des messages face à un humain. Face au bot : `{"username":"Sage","elo":<niveau>,"guest":true,"bot":true}` dans `deck_select.opponent` et `state.opponent`.
+- `StateView.clock_enabled: bool` (toujours présent) : `false` en solo, avec `clock = {white_ms:0, black_ms:0, running:null}`. Aucun timer `Flag` n'est créé.
+- `deck_select` est envoyé comme pour un duel ; le bot a déjà choisi (`opponent_skills.total = 3` dès le premier `state`, aucune unique). Ses 3 compétences sont tirées au hasard parmi `SkillId::ALL` filtrées sur `kind() == Classic` (donc les 6 classiques actuelles, les 15 futures aussi), sans doublon.
+- `game_over` : `rated:false`, `elo:null`, `reward:null`. Pas d'effet sur l'Elo, les compteurs, `rating_history`, le classement.
+
+**Structure serveur**
+- Pas d'`enum Seat` : `Session.players` reste `[PlayerId; 2]` ; le siège du bot porte un identifiant synthétique `bot:<game_id>` qui n'est jamais dans `conns`, `player_game` ni en base (les `send` vers lui sont des no-ops, aucune requête ne le trouve). Ce qui rend la partie « solo » est `Session.solo: Option<Solo{bot: Color, elo}>` (`hub/solo.rs`). `Hub::start_session` délègue à `open_session(.., solo)`.
+- `HubConfig` gagne `bot_delay_min/max` (600/1400 ms), `bot_think_max` (3 s), `bot_draw_min_plies` (40), `bot_draw_window` (30 cp).
+- **Les parties solo ne sont pas enregistrées** : aucune ligne dans `games` (la table référence des joueurs, et l'historique public `recent` n'est pas pollué). La revanche et l'état de partie vivent uniquement en mémoire, comme le reste du hub.
+
+**Tour du bot**
+- Après chaque action qui lui donne la main (et au démarrage s'il a les blancs), le hub planifie `Timer::BotMove{game_id, ply}` avec un délai aléatoire dans `[bot_delay_min, bot_delay_max]`. `App::fire` l'intercepte : instantané du `Game` sous le verrou (`Hub::bot_job`), recherche dans `spawn_blocking` (`bot::think`), puis `Hub::apply_bot_move` qui jette le résultat si la partie a disparu, est finie, ou si `ply` / le trait ont changé. Le délai de 600–1400 ms précède la recherche : le temps total d'une réponse est donc « délai + recherche ».
+- Plafond de réflexion : `min(Strength.think_ms, bot_think_max)` en temps réel (`stop` interrogé tous les 2 048 nœuds) en plus du budget de nœuds du niveau ; la première itération (profondeur 1) n'est jamais interrompue, donc une action légale est toujours trouvée. Un résultat illégal (ne devrait pas arriver) est remplacé par la première action légale.
+- Graine de l'IA : hachage FNV de l'identifiant de partie combiné au `ply` (`bot::seed_for`) ; avec la même graine, le moteur répond toujours la même chose (hors plafond de temps réel).
+- Le bot ne propose ni n'accepte de chat, ne propose pas de nulle, ne demande pas de revanche, n'abandonne jamais ; un joueur déconnecté forfait après `reconnect_grace` (60 s) comme dans un duel, y compris à l'écran de choix des compétences (annulation).
+
+**Nulle et revanche**
+- `offer_draw` est évaluée tout de suite par le bot (`bot::accepts_draw`, recherche de profondeur 2) : acceptée seulement si `ply ≥ bot_draw_min_plies` et si l'évaluation de son point de vue est dans `[−bot_draw_window, +bot_draw_window]` → `game_over` (`agreed_draw`, `outcome: {"type":"draw_agreed"}`), sinon `draw_declined`. Les règles « une offre par ply » du duel s'appliquent.
+- `rematch_request` après une partie solo démarre aussitôt une nouvelle partie (même niveau, couleurs inversées) avec un nouveau `deck_select` ; pas de `rematch_offered`. La possibilité disparaît dès que le joueur lance autre chose, se déconnecte ou démarre la revanche. `rematch_respond` n'a pas de sens face au bot (`no_rematch`).
+
+**Moteur et IA** (`chessy_engine::{search, ai}`)
+- `search.rs` : approfondissement itératif, négamax alpha-bêta avec PVS, table de transposition (clé `search::position_key` : cases avec identité de pièce, camp, roques, prise en passant, effets actifs), tri TT/MVV-LVA/tueurs/historique, réductions tardives légères, extension d'échec, recherche de quiétude sur les captures, nulles (50 coups, matériel insuffisant, répétition sur le chemin + historique optionnel). L'évaluation (`evaluate`) combine matériel, tables pièce-case (roi milieu/fin de partie), et en version complète structure de pions, paire de fous, tours sur colonnes ouvertes, abri du roi, mobilité. Budgets : `Limits{depth, nodes, margin, full_eval}` et une closure `stop` ; le moteur ne lit aucune horloge.
+- `score_moves` ne donne des scores exacts que pour les coups à moins de 100 cp du meilleur (`SCORE_MOVES_MARGIN`) ; les autres sont des bornes supérieures, pour rester sous 150 ms en profondeur 3 sur des positions tactiques. `best_move(pos, 3)` (Mind Reading) prend quelques millisecondes.
+- `ai::Strength::from_elo` : profondeur 1/2/3/4/5/6 par tranche, budget de nœuds et de temps croissants (0,3 s à 3 s), dispersion (160→80, 60→30, 25→10, 8→0, 0 cp), coups ratés (25→10 %, 10→4 %, 3→1 %, 1→0 %), seuil de compétence `T` de 250 (400) à 60 (2 800) cp, probabilité d'envisager une compétence de 25 % à 100 %, évaluation complète à partir de 2 400. Interpolation linéaire dans chaque tranche. Un mat forcé trouvé est toujours joué à partir de 800.
+- Compétences : l'IA simule chaque cible légale (`Position::try_skill`), échantillonne au plus 96 cibles, évalue d'abord à profondeur 1 puis re-cherche les 3 meilleures à `profondeur − 1`, et la joue si elle dépasse le meilleur coup d'au moins `T`. `mind` et `control` sont exclues par identifiant (`ai::IGNORED_SKILLS`), de même que toute compétence qui ne passe pas la main. Elle ne connaît pas l'historique de répétition de la partie.
+
 ## 6. Client
 
 - `catalog.ts` : les 20 compétences passent `implemented: true` une fois le serveur prêt.
