@@ -77,6 +77,12 @@ impl App {
         &self.store
     }
 
+    /// Running games for `GET /api/live`.
+    pub fn live_games(&self, limit: usize) -> Vec<crate::hub::LiveGame> {
+        let hub = self.hub.lock().unwrap_or_else(|e| e.into_inner());
+        hub.live_games(limit)
+    }
+
     /// A player's account changed outside the WebSocket (e.g. a guest
     /// registered); refreshes what a connected client sees.
     pub fn account_changed(self: &Arc<Self>, player: &str) {
@@ -189,6 +195,8 @@ impl App {
                 }
                 ClientMsg::ChallengeCancel => hub.challenge_cancel(player),
                 ClientMsg::SoloStart { elo, color } => hub.solo_start(player, elo, color),
+                ClientMsg::Spectate { game_id } => hub.spectate(player, &game_id),
+                ClientMsg::Unspectate => hub.unspectate(player),
             }
         });
     }

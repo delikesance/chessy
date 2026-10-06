@@ -6,6 +6,8 @@ use chessy_engine::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::hub::SpectatorView;
+
 pub type PlayerId = String;
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +78,11 @@ pub enum ClientMsg {
         #[serde(default)]
         color: SoloColor,
     },
+    /// Watches a running game (not allowed while playing).
+    Spectate {
+        game_id: String,
+    },
+    Unspectate,
 }
 
 /// Which side the human takes in a solo game.
@@ -174,6 +181,8 @@ pub struct FriendInfo {
     pub elo: i32,
     pub presence: Presence,
     pub last_seen: Option<String>,
+    /// The game they are playing right now, if it can be watched.
+    pub game_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -275,6 +284,8 @@ pub struct StateView {
     pub opponent: OpponentInfo,
     pub draw_offer: DrawOffer,
     pub ply_count: u32,
+    /// People watching the game right now.
+    pub spectators: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -353,6 +364,18 @@ pub enum ServerMsg {
     },
     RematchOffered {},
     RematchDeclined {},
+    /// A spectator's picture of the game: on entering, then after every action.
+    SpectateState {
+        view: Box<SpectatorView>,
+    },
+    /// The game watched has ended; the spectator is released.
+    SpectateOver {
+        view: Box<SpectatorView>,
+    },
+    /// The game watched was cancelled.
+    SpectateEnded {
+        reason: String,
+    },
 }
 
 impl ServerMsg {

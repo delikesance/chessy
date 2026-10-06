@@ -36,6 +36,13 @@ pub(super) fn hidden_ids(pos: &Position, viewer: Color) -> HashSet<PieceId> {
     hidden
 }
 
+/// Pieces a spectator cannot see: the invisible ones of both sides.
+pub(super) fn spectator_hidden(pos: &Position) -> HashSet<PieceId> {
+    let mut hidden = hidden_ids(pos, Color::White);
+    hidden.extend(hidden_ids(pos, Color::Black));
+    hidden
+}
+
 /// The board as `viewer` sees it: hidden pieces are empty squares.
 pub(super) fn board(pos: &Position, hidden: &HashSet<PieceId>) -> Vec<Option<Piece>> {
     pos.board
@@ -175,4 +182,16 @@ pub(super) fn events(
             other => Some(other),
         })
         .collect()
+}
+
+/// Events for a spectator: filtered as for the opponent of each side in turn,
+/// so nothing either side hides leaks (the first pass hides Black's secrets
+/// from White and the second White's from Black).
+pub(super) fn spectator_events(
+    all: Vec<Event>,
+    game: &Game,
+    hidden: &HashSet<PieceId>,
+) -> Vec<Event> {
+    let once = events(all, Color::White, game, hidden);
+    events(once, Color::Black, game, hidden)
 }

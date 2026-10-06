@@ -31,6 +31,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/me", get(me))
         .route("/leaderboard", get(leaderboard))
         .route("/players/{username}", get(profile))
+        .route("/live", get(crate::api_live::live))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 

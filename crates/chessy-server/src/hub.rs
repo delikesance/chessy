@@ -7,7 +7,10 @@
 
 mod social;
 mod solo;
+mod spectate;
 mod view;
+
+pub use spectate::{GameKind, LiveGame, LiveSeat, SpectatorView, UsedSkills, MAX_SPECTATORS};
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -54,6 +57,9 @@ pub struct HubConfig {
     pub bot_draw_min_plies: u32,
     /// ...and when its evaluation is within this many centipawns of equal.
     pub bot_draw_window: i32,
+    /// Spectators of a game between people see it this much late (anti-cheat).
+    /// Solo games are always shown live.
+    pub spectator_delay: Duration,
 }
 
 impl Default for HubConfig {
@@ -74,6 +80,7 @@ impl Default for HubConfig {
             bot_think_max: Duration::from_secs(3),
             bot_draw_min_plies: crate::bot::DRAW_MIN_PLIES,
             bot_draw_window: crate::bot::DRAW_WINDOW,
+            spectator_delay: Duration::from_secs(30),
         }
     }
 }
@@ -115,6 +122,10 @@ pub enum Timer {
         challenger: PlayerId,
         target: PlayerId,
         seq: u64,
+    },
+    /// Sends the spectators of a game the views whose delay is over.
+    SpectatorFlush {
+        game_id: String,
     },
 }
 
@@ -185,6 +196,8 @@ struct Session {
     /// Set for a Solo game: one seat is the bot (its `players` entry is a
     /// synthetic id that is never connected and has no account).
     solo: Option<solo::Solo>,
+    /// How the game came about; read through `Session::kind()` (Solo wins).
+    kind: GameKind,
 }
 
 impl Session {
@@ -226,6 +239,10 @@ pub struct Hub {
     rematches: HashMap<PlayerId, social::Rematch>,
     last_chat: HashMap<PlayerId, Instant>,
     timers: Vec<(Duration, Timer)>,
+    /// Spectators and delayed views per running game (see `spectate`).
+    feeds: HashMap<String, spectate::Feed>,
+    /// The game each spectator watches.
+    watching: HashMap<PlayerId, String>,
 }
 
 fn room_code() -> String {
@@ -263,6 +280,8 @@ impl Hub {
             rematches: HashMap::new(),
             last_chat: HashMap::new(),
             timers: Vec::new(),
+            feeds: HashMap::new(),
+            watching: HashMap::new(),
         }
     }
 
@@ -354,6 +373,7 @@ impl Hub {
         );
         self.push_friends(&id);
         self.resume(&id);
+        self.spectate_resume(&id);
         self.notify_presence(&id);
         Ok((id, conn_id))
     }
@@ -413,7 +433,8 @@ impl Hub {
                 );
             }
             Phase::Playing { game } => {
-                let view = state_view(game_id, session, game, color, Vec::new());
+                let spectators = self.watcher_count(game_id);
+                let view = state_view(game_id, session, game, color, Vec::new(), spectators);
                 self.send(player, ServerMsg::State(Box::new(view)));
             }
         }
@@ -425,6 +446,7 @@ impl Hub {
         }
         self.conns.remove(player);
         self.last_chat.remove(player);
+        self.spectate_leave(player);
         self.leave_lobby_silently(player);
         self.drop_challenges(player);
         self.drop_rematch(player, true);
@@ -525,6 +547,7 @@ impl Hub {
                 target,
                 seq,
             } => self.expire_challenge(&challenger, &target, seq),
+            Timer::SpectatorFlush { game_id } => self.spectate_flush(&game_id),
         }
     }
 
@@ -560,6 +583,7 @@ impl Hub {
         self.rewards.remove(player);
         self.drop_rematch(player, true);
         self.leave_lobby_silently(player);
+        self.spectate_leave(player);
         true
     }
 
@@ -662,7 +686,7 @@ impl Hub {
             Some(_) => {
                 let host = self.rooms.remove(&code).expect("room checked above");
                 self.leave_lobby_silently(player);
-                self.create_game(host, player.to_string(), false);
+                self.create_game_as(host, player.to_string(), false, GameKind::Room);
             }
         }
     }
@@ -681,18 +705,22 @@ impl Hub {
 
     /// Starts a game between two players with random colours.
     fn create_game(&mut self, a: PlayerId, b: PlayerId, rated: bool) {
+        self.create_game_as(a, b, rated, GameKind::Duel);
+    }
+
+    fn create_game_as(&mut self, a: PlayerId, b: PlayerId, rated: bool, kind: GameKind) {
         let (white, black) = if rand::random_bool(0.5) {
             (a, b)
         } else {
             (b, a)
         };
-        self.start_session(white, black, rated);
+        self.start_session(white, black, rated, kind);
     }
 
     /// Opens deck selection for two players, clearing whatever else they
     /// were doing: lobby spots, challenges, rematches and unclaimed rewards.
-    fn start_session(&mut self, white: PlayerId, black: PlayerId, rated: bool) {
-        self.open_session(white, black, rated, None);
+    fn start_session(&mut self, white: PlayerId, black: PlayerId, rated: bool, kind: GameKind) {
+        self.open_session(white, black, rated, None, kind);
     }
 
     /// [`Self::start_session`], optionally against the bot: for a Solo game
@@ -704,6 +732,7 @@ impl Hub {
         mut black: PlayerId,
         rated: bool,
         solo: Option<solo::Solo>,
+        kind: GameKind,
     ) {
         self.next_game += 1;
         let game_id = format!(
@@ -727,6 +756,7 @@ impl Hub {
         for player in &humans {
             self.rewards.remove(*player);
             self.leave_lobby_silently(player);
+            self.spectate_leave(player);
             self.drop_challenges(player);
             if let Some(r) = self.rematches.get(*player) {
                 // Rematching each other is not a departure.
@@ -756,6 +786,7 @@ impl Hub {
             draw_offer: None,
             last_offer_ply: [None, None],
             solo: seat_solo,
+            kind,
         };
         for player in &humans {
             self.player_game.insert((*player).clone(), game_id.clone());
@@ -874,6 +905,7 @@ impl Hub {
                 },
             ));
         }
+        self.spectate_open(game_id);
         self.broadcast_state(game_id, Vec::new());
         self.schedule_bot(game_id);
     }
@@ -882,6 +914,7 @@ impl Hub {
         let Some(session) = self.games.remove(game_id) else {
             return;
         };
+        self.spectate_cancel(game_id, reason);
         for player in &session.players {
             self.player_game.remove(player);
             self.send(
@@ -1086,20 +1119,22 @@ impl Hub {
         Some((game_id, color))
     }
 
-    fn broadcast_state(&self, game_id: &str, events: Vec<chessy_engine::Event>) {
+    fn broadcast_state(&mut self, game_id: &str, events: Vec<chessy_engine::Event>) {
         let Some(session) = self.games.get(game_id) else {
             return;
         };
         let Phase::Playing { game } = &session.phase else {
             return;
         };
+        let spectators = self.watcher_count(game_id);
         for color in Color::BOTH {
-            let view = state_view(game_id, session, game, color, events.clone());
+            let view = state_view(game_id, session, game, color, events.clone(), spectators);
             self.send(
                 &session.players[color.index()],
                 ServerMsg::State(Box::new(view)),
             );
         }
+        self.spectate_publish(game_id, events);
     }
 
     // ---- game end and rewards -------------------------------------------
@@ -1188,7 +1223,7 @@ impl Hub {
         if solo {
             self.offer_solo_rematch(&session);
         } else {
-            self.offer_rematch(&session.players, session.rated);
+            self.offer_rematch(&session.players, session.rated, session.kind);
         }
         for player in &session.players {
             self.notify_presence(player);
@@ -1315,6 +1350,7 @@ fn state_view(
     game: &Game,
     you: Color,
     events: Vec<chessy_engine::Event>,
+    spectators: usize,
 ) -> StateView {
     let mut moves = Vec::new();
     let mut skill_options: Vec<SkillOptions> = Vec::new();
@@ -1374,6 +1410,7 @@ fn state_view(
             Some(_) => DrawOffer::Them,
         },
         ply_count: game.pos.ply,
+        spectators,
     }
 }
 
