@@ -8,6 +8,8 @@ import { Lobby } from "./screens/Lobby";
 import { Profile } from "./screens/Profile";
 import { Ranking } from "./screens/Ranking";
 import { RewardModal } from "./screens/RewardModal";
+import { Settings } from "./screens/Settings";
+import { installUiClicks } from "./sound/uiClicks";
 import { store, useAppState } from "./store";
 import { ChallengeModal, OutgoingChallenge } from "./ui/ChallengeModal";
 import { NavBar } from "./ui/NavBar";
@@ -25,6 +27,7 @@ export function App() {
     store.connect();
     return () => store.disconnect();
   }, []);
+  useEffect(() => installUiClicks(), []);
 
   const reward = state.over?.reward ?? state.pendingReward;
   // Une partie en cours (ou son choix de compétences) prend la place de n'importe quelle page.
@@ -62,6 +65,9 @@ export function App() {
         break;
       case "collection":
         screen = <Collection />;
+        break;
+      case "settings":
+        screen = <Settings />;
         break;
       default:
         screen = <Lobby state={state} />;

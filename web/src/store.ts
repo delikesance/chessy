@@ -15,6 +15,7 @@ import type {
   StateView,
   UserResult,
 } from "./protocol";
+import { sfx } from "./sound";
 import { clampElo, readSolo, SOLO_DEFAULT, writeSolo, type SoloSetting } from "./solo";
 
 export interface Toast {
@@ -160,6 +161,9 @@ export function noticeText(code: NoticeCode, username?: string): string {
       return "Notification.";
   }
 }
+
+/** Parties dont l'arrivée a déjà été annoncée par un son (une reconnexion renvoie `deck_select`). */
+const announcedMatches = new Set<string>();
 
 const TOAST_MS = 4500;
 const CHALLENGE_MS = 60_000;
@@ -360,12 +364,14 @@ export class Store {
       case "notice":
         if (msg.code === "challenge_declined" || msg.code === "challenge_expired") this.set({ outgoingChallenge: null });
         if (msg.code === "challenge_cancelled" || msg.code === "challenge_expired") this.clearIncoming();
+        sfx.play(msg.code === "friend_request_received" ? "friend_request" : "notice");
         this.notify(noticeText(msg.code, msg.username));
         break;
       case "challenge_received":
         if (this.challengeTimer) clearTimeout(this.challengeTimer);
         this.challengeTimer = setTimeout(() => this.clearIncoming(), CHALLENGE_MS);
         this.set({ incomingChallenge: msg.from });
+        sfx.play("challenge");
         break;
       case "challenge_sent":
         this.set({ outgoingChallenge: msg.username });
@@ -378,6 +384,7 @@ export class Store {
         this.notify("Votre proposition de nulle a été refusée.");
         break;
       case "chat":
+        if (!msg.mine) sfx.play("chat");
         this.set({ chat: [...this.state.chat, { mine: msg.mine, text: msg.text }].slice(-60) });
         break;
       case "rematch_offered":
@@ -392,6 +399,10 @@ export class Store {
         break;
       case "deck_select": {
         const { type: _type, ...info } = msg;
+        if (!announcedMatches.has(info.game_id)) {
+          announcedMatches.add(info.game_id);
+          if (!info.opponent?.bot) sfx.play("match_found");
+        }
         this.clearIncoming();
         this.clearSoloPending();
         this.set({
@@ -434,11 +445,13 @@ export class Store {
       case "game_cancelled":
         this.clearSoloPending();
         this.set({ game: null, deckSelect: null, over: null, rematch: "none" });
+        sfx.play("notice");
         this.notify("La partie a été annulée.");
         break;
       case "error":
         this.clearSoloPending();
         if (msg.code === "replaced") this.set({ connection: "replaced" });
+        if (msg.code === "illegal_action" || msg.code === "not_your_turn") sfx.play("illegal");
         this.notify(ERROR_TEXT[msg.code] ?? msg.message);
         break;
     }
@@ -446,6 +459,8 @@ export class Store {
 }
 
 export const store = new Store();
+// Lets the dev console and browser checks drive the store (never in production builds).
+if (import.meta.env.DEV && typeof window !== "undefined") (window as unknown as { __chessyStore: Store }).__chessyStore = store;
 
 export function useAppState(): AppState {
   return useSyncExternalStore(store.subscribe, store.getState);

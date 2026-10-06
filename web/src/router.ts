@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from "react";
 
-/** Routes par hash : #/, #/auth, #/ranking, #/friends, #/profile/<pseudo>, #/collection */
+/** Routes par hash : #/, #/auth, #/ranking, #/friends, #/profile/<pseudo>, #/collection, #/settings */
 export interface Route {
-  name: "home" | "auth" | "ranking" | "friends" | "profile" | "collection";
+  name: "home" | "auth" | "ranking" | "friends" | "profile" | "collection" | "settings";
   param?: string;
 }
 
@@ -17,6 +17,8 @@ export function parseHash(hash: string): Route {
       return { name: "friends" };
     case "collection":
       return { name: "collection" };
+    case "settings":
+      return { name: "settings" };
     case "profile":
       return parts[1] ? { name: "profile", param: decodeURIComponent(parts[1]) } : { name: "home" };
     default:

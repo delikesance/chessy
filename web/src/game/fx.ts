@@ -137,6 +137,27 @@ export function drawArrow(g: Phaser.GameObjects.Graphics, ax: number, ay: number
   g.lineStyle(2, 0x0e0f12, 0.8).strokeCircle(sx, sy, 7);
 }
 
+/** Flèche pointillée (premove) : tirets le long de l'axe, pointe pleine. */
+export function drawDashedArrow(g: Phaser.GameObjects.Graphics, ax: number, ay: number, bx: number, by: number, color: number) {
+  const angle = Math.atan2(by - ay, bx - ax);
+  const head = 22;
+  const len = Math.hypot(bx - ax, by - ay);
+  const ux = Math.cos(angle);
+  const uy = Math.sin(angle);
+  const start = 18;
+  const end = Math.max(start, len - head - 4);
+  g.lineStyle(6, color, 0.95);
+  for (let d = start; d < end; d += 22) {
+    const e = Math.min(d + 13, end);
+    g.lineBetween(ax + ux * d, ay + uy * d, ax + ux * e, ay + uy * e);
+  }
+  const tip = pt(bx - ux * 6, by - uy * 6);
+  const l = pt(tip.x - Math.cos(angle - 0.5) * head, tip.y - Math.sin(angle - 0.5) * head);
+  const r = pt(tip.x - Math.cos(angle + 0.5) * head, tip.y - Math.sin(angle + 0.5) * head);
+  g.fillStyle(color, 0.95).fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
+  g.fillStyle(color, 0.95).fillCircle(ax + ux * 8, ay + uy * 8, 5);
+}
+
 /** Dessine le marqueur persistant d'un effet, centré sur l'origine. */
 export function drawEffectMark(g: Phaser.GameObjects.Graphics, kind: EffectKind) {
   switch (kind) {
