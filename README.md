@@ -14,6 +14,10 @@ Les règles des compétences sont décrites dans [docs/skills.md](docs/skills.md
   revanche, abandon, reprise de partie après déconnexion (60 s de grâce).
 - **Compétences** : les 27 sont jouables et illustrées (7 uniques, 20 classiques) ; règles dans [docs/skills.md](docs/skills.md) et [docs/spec-v3.md](docs/spec-v3.md).
 - **Mode Solo** : partie d'entraînement contre l'IA « Sage », niveau d'Elo réglable de 400 à 2800 (profondeur, erreurs et usage des compétences varient avec le niveau), avec ou sans compte, sans horloge ni Elo en jeu.
+- **Sons et couleurs** : une cinquantaine de sons synthétisés (Web Audio, aucun fichier) pour les coups, captures, compétences, « à vous de jouer », fin de partie, etc. ; page Réglages (volumes, thèmes de plateau, jeux de pièces, couleur d'accent).
+- **Jouer à la souris** : glisser-déposer des pièces et **premoves** (coups joués à l'avance, annulables) comme sur chess.com.
+- **Parties en direct** : onglet « En direct » pour regarder les parties en cours (contre l'IA ou entre joueurs, avec 30 s de décalage pour les duels) ; informations cachées (pièces invisibles, pièges) jamais révélées.
+- **Replays et analyse** : toutes les parties sont enregistrées (« Mes parties ») ; replay pas à pas, analyse du moteur (précision, étiquettes meilleur/erreur/gaffe, meilleur coup en flèche) et exploration de variantes ; spécification dans [docs/spec-v4.md](docs/spec-v4.md).
 - **Design B « Graphite »** : thème plat et sobre, plateau Phaser, carte de lancement des compétences.
 
 Le contrat serveur/client est décrit dans [docs/spec-v2.md](docs/spec-v2.md).
