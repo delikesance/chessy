@@ -56,12 +56,14 @@ interface ResultProps {
   outcome: Outcome;
   you: Color;
   rated: boolean;
+  /** Partie contre l'IA : ni Elo ni récompense, revanche immédiate. */
+  solo?: boolean;
   elo: EloChange | null;
   rematch: "none" | "offered" | "received";
   onHide: () => void;
 }
 
-export function ResultPanel({ outcome, you, rated, elo, rematch, onHide }: ResultProps) {
+export function ResultPanel({ outcome, you, rated, solo = false, elo, rematch, onHide }: ResultProps) {
   const { title, reason } = resultHeadline(outcome, you);
   const result = resultFor(outcome, you);
   const delta = elo ? elo.you_after - elo.you_before : null;
@@ -79,7 +81,9 @@ export function ResultPanel({ outcome, you, rated, elo, rematch, onHide }: Resul
         </h2>
         <p className="muted">{reason}</p>
 
-        {rated && elo && delta !== null ? (
+        {solo ? (
+          <p className="muted gm-elo-none">Partie d'entraînement : ni Elo ni récompense en jeu.</p>
+        ) : rated && elo && delta !== null ? (
           <div className="gm-elo">
             <span className="gm-elo-delta mono">{formatDelta(delta)}</span>
             <span className="muted">
@@ -105,7 +109,7 @@ export function ResultPanel({ outcome, you, rated, elo, rematch, onHide }: Resul
             </>
           ) : (
             <button type="button" className="btn pri" ref={first} disabled={rematch === "offered"} onClick={() => store.requestRematch()}>
-              {rematch === "offered" ? "Revanche proposée…" : "Revanche"}
+              {rematch === "offered" ? (solo ? "Nouvelle partie…" : "Revanche proposée…") : "Revanche"}
             </button>
           )}
           <div className="gm-result-row">

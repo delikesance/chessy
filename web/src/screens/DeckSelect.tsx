@@ -26,7 +26,8 @@ export function DeckSelect({ info }: { info: DeckSelectInfo }) {
     );
 
   const opp = info.opponent;
-  const oppName = opp.username ?? "Invité";
+  const isBot = opp.bot === true;
+  const oppName = opp.username ?? (isBot ? "Sage" : "Invité");
   const share = info.seconds > 0 ? Math.max(0, Math.min(1, left / info.seconds)) : 0;
   const urgent = left <= 10;
 
@@ -48,17 +49,26 @@ export function DeckSelect({ info }: { info: DeckSelectInfo }) {
         <div className="card dk-opp" aria-label="Adversaire">
           <span className="avatar">{initialOf(oppName)}</span>
           <div className="dk-opp-txt">
-            <span className="dk-opp-name">{oppName}</span>
+            <span className="dk-opp-name">
+              {oppName}
+              {isBot && opp.elo !== null && <span className="mono muted"> · {opp.elo}</span>}
+            </span>
             <span className="muted dk-opp-meta">
-              {opp.elo !== null ? (
+              {isBot ? (
+                "partie d'entraînement"
+              ) : (
                 <>
-                  <span className="mono">{opp.elo}</span> Elo ·{" "}
+                  {opp.elo !== null ? (
+                    <>
+                      <span className="mono">{opp.elo}</span> Elo ·{" "}
+                    </>
+                  ) : null}
+                  {info.rated ? "classée" : "amicale"}
                 </>
-              ) : null}
-              {info.rated ? "classée" : "amicale"}
+              )}
             </span>
           </div>
-          <span className="tag">{info.rated ? "Classée" : "Amicale"}</span>
+          <span className="tag">{isBot ? "IA" : info.rated ? "Classée" : "Amicale"}</span>
         </div>
       </header>
 

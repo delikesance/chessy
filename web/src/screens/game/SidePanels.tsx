@@ -150,6 +150,18 @@ export function Actions({ view, over }: { view: StateView; over: boolean }) {
   );
 }
 
+/** Remplace le chat contre l'IA : il n'y a personne à qui écrire. */
+export function TrainingNote() {
+  return (
+    <section className="gm-panel card gm-training" aria-labelledby="gm-training-h">
+      <h2 id="gm-training-h" className="gm-h">
+        Entraînement contre l'IA
+      </h2>
+      <p className="muted gm-empty">Sans horloge, sans Elo en jeu et sans récompense : prenez le temps d'essayer vos compétences.</p>
+    </section>
+  );
+}
+
 const QUICK = ["Bien joué !", "Merci", "Bonne chance", "Oups…", "Belle compétence"];
 
 export function Chat({ lines }: { lines: ChatLine[] }) {

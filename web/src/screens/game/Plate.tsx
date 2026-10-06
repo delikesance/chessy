@@ -40,10 +40,14 @@ interface PlateProps {
   remaining: number;
   disconnected?: boolean;
   you?: boolean;
+  /** Adversaire IA : étiquette « IA » et Elo présenté comme un niveau. */
+  bot?: boolean;
+  /** Faux en solo : l'horloge n'est ni affichée ni interpolée. */
+  clockEnabled?: boolean;
   clockLabel: string;
 }
 
-export function Plate({ name, elo, color, board, clock, stamp, active, used, remaining, disconnected, you, clockLabel }: PlateProps) {
+export function Plate({ name, elo, color, board, clock, stamp, active, used, remaining, disconnected, you, bot, clockEnabled = true, clockLabel }: PlateProps) {
   // Les pièces que ce joueur a prises sont les pièces manquantes de l'autre camp.
   const taken = capturedPieces(board, color === "white" ? "black" : "white");
   const lead = materialBalance(board, color);
@@ -53,7 +57,13 @@ export function Plate({ name, elo, color, board, clock, stamp, active, used, rem
       <div className="gm-plate-main">
         <div className="gm-plate-name">
           <strong>{name}</strong>
-          {elo !== null && <span className="mono muted">{elo}</span>}
+          {elo !== null && (
+            <span className="mono muted">
+              {bot ? "· " : ""}
+              {elo}
+            </span>
+          )}
+          {bot && <span className="tag">IA</span>}
           {disconnected && <span className="tag">déconnecté</span>}
           {active && <span className="tag gm-turn-tag">au trait</span>}
         </div>
@@ -78,7 +88,7 @@ export function Plate({ name, elo, color, board, clock, stamp, active, used, rem
           </span>
         </div>
       </div>
-      <ClockFace clock={clock} color={color} stamp={stamp} label={clockLabel} />
+      {clockEnabled && <ClockFace clock={clock} color={color} stamp={stamp} label={clockLabel} />}
     </div>
   );
 }

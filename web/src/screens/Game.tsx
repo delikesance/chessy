@@ -9,7 +9,7 @@ import { store, useAppState } from "../store";
 import { Wordmark } from "../ui/NavBar";
 import { LaunchCard, PromotionPicker, ResultPanel } from "./game/Overlays";
 import { EvalBar, Plate } from "./game/Plate";
-import { Actions, Chat, Journal, SkillList } from "./game/SidePanels";
+import { Actions, Chat, Journal, SkillList, TrainingNote } from "./game/SidePanels";
 import "./game.css";
 
 const LAUNCH_MS = 2500; // 0,55 s de délai (on voit d'abord l'effet sur le plateau) + 1,9 s de carte
@@ -106,7 +106,9 @@ export function Game({ view }: { view: StateView }) {
   const hl = useMemo(() => highlights(view, interaction), [view, interaction]);
 
   const opp = view.opponent;
-  const oppName = opp.username ?? "Invité";
+  const isBot = opp.bot === true;
+  const clockEnabled = view.clock_enabled !== false;
+  const oppName = opp.username ?? (isBot ? "Sage" : "Invité");
   const opponentColor = view.you === "white" ? "black" : "white";
   const myUsed = view.my_skills.filter((s) => s.used).map((s) => s.skill);
 
@@ -128,7 +130,11 @@ export function Game({ view }: { view: StateView }) {
   } else if (view.draw_offer === "them") {
     hint = "Votre adversaire propose la nulle.";
   } else {
-    hint = myTurn ? "À vous de jouer. Sélectionnez une pièce ou une compétence." : "Tour de l'adversaire…";
+    hint = myTurn
+        ? "À vous de jouer. Sélectionnez une pièce ou une compétence."
+        : isBot
+          ? `${oppName} réfléchit…`
+          : "Tour de l'adversaire…";
   }
 
   return (
@@ -136,7 +142,7 @@ export function Game({ view }: { view: StateView }) {
       <header className="gm-top">
         <Wordmark />
         <div className="gm-top-mid">
-          <span className="tag">{view.rated ? "Classée" : "Amicale"}</span>
+          <span className="tag">{isBot ? "Entraînement" : view.rated ? "Classée" : "Amicale"}</span>
           <span className="mono muted">Demi-coup {view.ply}</span>
         </div>
         <span className="gm-you muted">
@@ -162,6 +168,8 @@ export function Game({ view }: { view: StateView }) {
             color={opponentColor}
             board={view.board}
             clock={view.clock}
+            clockEnabled={clockEnabled}
+            bot={isBot}
             stamp={stamp}
             active={view.to_move === opponentColor && !over_}
             used={view.opponent_skills.used}
@@ -204,6 +212,7 @@ export function Game({ view }: { view: StateView }) {
                   outcome={view.outcome}
                   you={view.you}
                   rated={over?.rated ?? view.rated}
+                  solo={isBot}
                   elo={over?.elo ?? null}
                   rematch={rematch}
                   onHide={() => setResultHidden(true)}
@@ -218,6 +227,7 @@ export function Game({ view }: { view: StateView }) {
             color={view.you}
             board={view.board}
             clock={view.clock}
+            clockEnabled={clockEnabled}
             stamp={stamp}
             active={myTurn}
             used={myUsed}
@@ -230,7 +240,7 @@ export function Game({ view }: { view: StateView }) {
         <aside className="gm-right">
           <Actions view={view} over={over_} />
           <Journal log={log} you={view.you} />
-          <Chat lines={chat} />
+          {isBot ? <TrainingNote /> : <Chat lines={chat} />}
         </aside>
       </main>
     </div>
