@@ -4,6 +4,7 @@
 //! the chess rules; [`Game`] adds skill loadouts, outcome detection and
 //! repetition tracking on top.
 
+pub mod ai;
 pub mod game;
 pub mod position;
 pub mod search;
