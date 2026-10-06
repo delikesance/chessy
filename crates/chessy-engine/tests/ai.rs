@@ -48,9 +48,9 @@ fn strength_interpolates_inside_a_tier() {
     let low = Strength::from_elo(400);
     let mid = Strength::from_elo(600);
     let high = Strength::from_elo(799);
-    assert_eq!(low.blunder_permille, 250);
-    assert_eq!(mid.blunder_permille, 175);
-    assert!(high.blunder_permille < 105 && high.blunder_permille >= 100);
+    assert_eq!(low.blunder_permille, 550);
+    assert_eq!(mid.blunder_permille, 425);
+    assert!(high.blunder_permille < 305 && high.blunder_permille >= 300);
     assert!(low.dispersion > mid.dispersion && mid.dispersion > high.dispersion);
     assert_eq!(Strength::from_elo(1200).blunder_permille, 30);
     assert_eq!(Strength::from_elo(2000).blunder_permille, 0);

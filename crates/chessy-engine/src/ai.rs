@@ -79,9 +79,9 @@ impl Strength {
                 depth: 1,
                 nodes: 20_000,
                 ms: 300,
-                dispersion: (160, 80),
-                candidates: 5,
-                blunder: (250, 100),
+                dispersion: (400, 150),
+                candidates: 8,
+                blunder: (550, 300),
             },
             Tier {
                 from: 800,

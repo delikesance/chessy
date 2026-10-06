@@ -118,7 +118,7 @@ Le niveau `elo` règle : profondeur de recherche, bruit d'évaluation, probabili
 
 | Elo | Profondeur | Comportement |
 |---|---|---|
-| 400–799 | 1 | choisit parmi les 5 meilleurs coups avec forte dispersion, 25–10 % de coups quasi aléatoires |
+| 400–799 | 1 | choisit parmi les 8 meilleurs coups avec très forte dispersion, 55–30 % de coups quasi aléatoires |
 | 800–1199 | 2 | dispersion moyenne, 10–4 % de coups ratés |
 | 1200–1599 | 3 | faible dispersion, 3–1 % |
 | 1600–1999 | 4 | quasi déterministe |
@@ -158,7 +158,7 @@ Précisions et écarts, tels que livrés dans `crates/`.
 **Moteur et IA** (`chessy_engine::{search, ai}`)
 - `search.rs` : approfondissement itératif, négamax alpha-bêta avec PVS, table de transposition (clé `search::position_key` : cases avec identité de pièce, camp, roques, prise en passant, effets actifs), tri TT/MVV-LVA/tueurs/historique, réductions tardives légères, extension d'échec, recherche de quiétude sur les captures, nulles (50 coups, matériel insuffisant, répétition sur le chemin + historique optionnel). L'évaluation (`evaluate`) combine matériel, tables pièce-case (roi milieu/fin de partie), et en version complète structure de pions, paire de fous, tours sur colonnes ouvertes, abri du roi, mobilité. Budgets : `Limits{depth, nodes, margin, full_eval}` et une closure `stop` ; le moteur ne lit aucune horloge.
 - `score_moves` ne donne des scores exacts que pour les coups à moins de 100 cp du meilleur (`SCORE_MOVES_MARGIN`) ; les autres sont des bornes supérieures, pour rester sous 150 ms en profondeur 3 sur des positions tactiques. `best_move(pos, 3)` (Mind Reading) prend quelques millisecondes.
-- `ai::Strength::from_elo` : profondeur 1/2/3/4/5/6 par tranche, budget de nœuds et de temps croissants (0,3 s à 3 s), dispersion (160→80, 60→30, 25→10, 8→0, 0 cp), coups ratés (25→10 %, 10→4 %, 3→1 %, 1→0 %), seuil de compétence `T` de 250 (400) à 60 (2 800) cp, probabilité d'envisager une compétence de 25 % à 100 %, évaluation complète à partir de 2 400. Interpolation linéaire dans chaque tranche. Un mat forcé trouvé est toujours joué à partir de 800.
+- `ai::Strength::from_elo` : profondeur 1/2/3/4/5/6 par tranche, budget de nœuds et de temps croissants (0,3 s à 3 s), dispersion (400→150, 60→30, 25→10, 8→0, 0 cp), coups ratés (55→30 %, 10→4 %, 3→1 %, 1→0 %), seuil de compétence `T` de 250 (400) à 60 (2 800) cp, probabilité d'envisager une compétence de 25 % à 100 %, évaluation complète à partir de 2 400. Interpolation linéaire dans chaque tranche. Un mat forcé trouvé est toujours joué à partir de 800.
 - Compétences : l'IA simule chaque cible légale (`Position::try_skill`), échantillonne au plus 96 cibles, évalue d'abord à profondeur 1 puis re-cherche les 3 meilleures à `profondeur − 1`, et la joue si elle dépasse le meilleur coup d'au moins `T`. `mind` et `control` sont exclues par identifiant (`ai::IGNORED_SKILLS`), de même que toute compétence qui ne passe pas la main. Elle ne connaît pas l'historique de répétition de la partie.
 
 ## 6. Client
