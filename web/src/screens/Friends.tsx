@@ -291,9 +291,16 @@ function Detail({ friend, online }: { friend: FriendInfo; online: boolean }) {
               </button>
             </>
           ) : (
-            <button type="button" className="btn pri" disabled={!canChallenge} onClick={() => store.send({ type: "challenge", username: friend.username })}>
-              Défier
-            </button>
+            <>
+              <button type="button" className="btn pri" disabled={!canChallenge} onClick={() => store.send({ type: "challenge", username: friend.username })}>
+                Défier
+              </button>
+              {friend.presence === "in_game" && friend.game_id && (
+                <a className="btn" href={hrefFor({ name: "watch", param: friend.game_id })}>
+                  Regarder
+                </a>
+              )}
+            </>
           )}
         </div>
       </div>

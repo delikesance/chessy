@@ -10,8 +10,16 @@ import "./styles/color.css";
 
 initTheme();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+async function boot() {
+  // Serveur simulé (fixtures) : `?mock=1`, développement uniquement. Le bloc disparaît du bundle de production.
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
+    (await import("./dev/mock")).installMock();
+  }
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}
+
+void boot();

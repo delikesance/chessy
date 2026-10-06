@@ -1,13 +1,25 @@
 import { useSyncExternalStore } from "react";
 
-/** Routes par hash : #/, #/auth, #/ranking, #/friends, #/profile/<pseudo>, #/collection, #/settings */
+/**
+ * Routes par hash : #/, #/auth, #/ranking, #/friends, #/profile/<pseudo>, #/collection,
+ * #/live, #/watch/<partie>, #/games, #/replay/<partie>[/analyse]
+ */
 export interface Route {
-  name: "home" | "auth" | "ranking" | "friends" | "profile" | "collection" | "settings";
+  name: "home" | "auth" | "ranking" | "friends" | "profile" | "collection" | "settings" | "live" | "watch" | "games" | "replay";
   param?: string;
+  /** `#/replay/<id>/analyse` : ouvre le replay en lançant tout de suite l'analyse. */
+  sub?: "analyse";
 }
 
 export function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  const id = (i: number) => {
+    try {
+      return decodeURIComponent(parts[i]);
+    } catch {
+      return parts[i];
+    }
+  };
   switch (parts[0]) {
     case "auth":
       return { name: "auth" };
@@ -19,6 +31,15 @@ export function parseHash(hash: string): Route {
       return { name: "collection" };
     case "settings":
       return { name: "settings" };
+    case "live":
+      return { name: "live" };
+    case "games":
+      return { name: "games" };
+    case "watch":
+      return parts[1] ? { name: "watch", param: id(1) } : { name: "live" };
+    case "replay":
+      if (!parts[1]) return { name: "games" };
+      return parts[2] === "analyse" ? { name: "replay", param: id(1), sub: "analyse" } : { name: "replay", param: id(1) };
     case "profile":
       return parts[1] ? { name: "profile", param: decodeURIComponent(parts[1]) } : { name: "home" };
     default:
@@ -31,7 +52,10 @@ export function hrefFor(route: Route): string {
     case "home":
       return "#/";
     case "profile":
-      return `#/profile/${encodeURIComponent(route.param ?? "")}`;
+    case "watch":
+      return `#/${route.name}/${encodeURIComponent(route.param ?? "")}`;
+    case "replay":
+      return `#/replay/${encodeURIComponent(route.param ?? "")}${route.sub === "analyse" ? "/analyse" : ""}`;
     default:
       return `#/${route.name}`;
   }

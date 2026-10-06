@@ -1,0 +1,440 @@
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { api, ApiError, gameErrorText } from "../api";
+import type { Action, Color, GameRecord } from "../protocol";
+import { arrowSquares } from "../replay/arrow";
+import {
+  beginExplore,
+  currentResponse,
+  exploreErrorText,
+  exploreRequest,
+  extendExplore,
+  undoExplore,
+  type ExploreState,
+} from "../replay/explore";
+import { evalSeries } from "../replay/evalCurve";
+import { colorOf, COLOR_FR, defaultOrientation, endSound, exploreViews, frameToView, isReplayable, kindLabel, lastIndex, opposite, seatName } from "../replay/frames";
+import { analysisByPly } from "../replay/labels";
+import { resultLine } from "../replay/lists";
+import { initialNav, keyToNav, navReduce, shouldHandleKey, stepDelay } from "../replay/nav";
+import { sfx } from "../sound";
+import { readToken, useAppState } from "../store";
+import { relativeTime } from "../ui/social";
+import { EvalBar, Plate } from "./game/Plate";
+import { PromotionPicker, SpawnPicker } from "./game/Overlays";
+import { SkillList } from "./game/SidePanels";
+import { AnalysisPanel, type AnalysisState } from "./replay/AnalysisPanel";
+import { BoardStage } from "./replay/BoardStage";
+import { Controls } from "./replay/Controls";
+import { EvalChart } from "./replay/EvalChart";
+import { ExplorePanel, MovePanel } from "./replay/InfoPanels";
+import { MoveList } from "./replay/MoveList";
+import { useBoardInteraction } from "./replay/useBoardInteraction";
+import "./game.css";
+import "./replay.css";
+
+type Load = { status: "loading" } | { status: "ready"; record: GameRecord } | { status: "error"; message: string; retry: boolean };
+
+/** Page `#/replay/<id>` : charge la partie puis affiche le lecteur. */
+export function Replay({ gameId, autoAnalyse = false }: { gameId: string; autoAnalyse?: boolean }) {
+  const [load, setLoad] = useState<Load>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    setLoad({ status: "loading" });
+    api
+      .game(gameId, readToken(), ctl.signal)
+      .then((record) => {
+        if (ctl.signal.aborted) return;
+        if (!isReplayable(record)) setLoad({ status: "error", message: "Replay indisponible pour cette partie.", retry: false });
+        else setLoad({ status: "ready", record });
+      })
+      .catch((e: unknown) => {
+        if (ctl.signal.aborted) return;
+        // Introuvable, accès refusé ou pas de replay : réessayer n'y changera rien.
+        const final = e instanceof ApiError && (e.status === 404 || e.status === 403 || e.code === "no_replay");
+        setLoad({ status: "error", message: gameErrorText(e), retry: !final });
+      });
+    return () => ctl.abort();
+  }, [gameId, attempt]);
+
+  if (load.status === "loading") {
+    return (
+      <main className="rp">
+        <div className="rp-state card" role="status" aria-live="polite">
+          <span className="rp-spinner" aria-hidden="true" />
+          <p>Chargement de la partie…</p>
+        </div>
+      </main>
+    );
+  }
+  if (load.status === "error") {
+    return (
+      <main className="rp">
+        <div className="rp-state card" role="alert">
+          <h1 className="rp-state-title">{load.message}</h1>
+          <p className="muted">Vous pouvez retrouver vos parties terminées dans « Mes parties ».</p>
+          <div className="gm-row rp-state-actions">
+            {load.retry && (
+              <button type="button" className="btn pri" onClick={() => setAttempt((n) => n + 1)}>
+                Réessayer
+              </button>
+            )}
+            <a className={`btn${load.retry ? "" : " pri"}`} href="#/games">
+              Mes parties
+            </a>
+          </div>
+        </div>
+      </main>
+    );
+  }
+  return <ReplayPlayer key={load.record.game_id} record={load.record} autoAnalyse={autoAnalyse} />;
+}
+
+interface ExploreRun {
+  state: ExploreState;
+  pending: boolean;
+  error: string | null;
+}
+
+function EngineBar({ cp, orientation }: { cp: number; orientation: Color }) {
+  // Part des blancs : sigmoïde douce, du point de vue de l'orientation (les blancs en bas si on les regarde d'en bas).
+  const share = 1 / (1 + Math.exp(-cp / 350));
+  const whiteBottom = orientation === "white";
+  return (
+    <div className="gm-eval rp-engine" role="img" aria-label={`Évaluation du moteur : ${cp >= 0 ? "avantage blanc" : "avantage noir"}`}>
+      <i style={whiteBottom ? { height: `${Math.round(share * 100)}%` } : { height: `${Math.round(share * 100)}%`, top: 0, bottom: "auto" }} />
+    </div>
+  );
+}
+
+function ReplayPlayer({ record, autoAnalyse }: { record: GameRecord; autoAnalyse: boolean }) {
+  const { account } = useAppState();
+  const username = account && !account.guest ? account.username : null;
+  const mine = colorOf(record, username);
+  const max = lastIndex(record);
+
+  const [orientation, setOrientation] = useState<Color>(() => defaultOrientation(record, username));
+  const [nav, dispatch] = useReducer(navReduce, max, (m) => initialNav(m));
+  const [showBest, setShowBest] = useState(true);
+
+  // ---- analyse ----
+  const [depth, setDepth] = useState(3);
+  const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
+  const analysisCtl = useRef<AbortController | null>(null);
+
+  const runAnalysis = useCallback(
+    (d: number) => {
+      analysisCtl.current?.abort();
+      const ctl = new AbortController();
+      analysisCtl.current = ctl;
+      setAnalysis({ status: "loading", depth: d });
+      api
+        .analysis(record.game_id, d, readToken(), ctl.signal)
+        .then((data) => !ctl.signal.aborted && setAnalysis({ status: "ready", depth: d, data }))
+        .catch((e: unknown) => !ctl.signal.aborted && setAnalysis({ status: "error", depth: d, error: gameErrorText(e) }));
+    },
+    [record.game_id],
+  );
+  const cancelAnalysis = useCallback(() => {
+    analysisCtl.current?.abort();
+    setAnalysis({ status: "idle" });
+  }, []);
+
+  useEffect(() => {
+    if (autoAnalyse) runAnalysis(3);
+    return () => analysisCtl.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const analysisData = analysis.status === "ready" ? analysis.data : null;
+  const byPly = useMemo(() => analysisByPly(analysisData), [analysisData]);
+  const series = useMemo(() => (analysisData ? evalSeries(analysisData, record.plies) : null), [analysisData, record.plies]);
+
+  // ---- exploration ----
+  const [explore, setExplore] = useState<ExploreRun | null>(null);
+  const [exploreStarting, setExploreStarting] = useState(false);
+  const [exploreNote, setExploreNote] = useState<string | null>(null);
+  const exploreCtl = useRef<AbortController | null>(null);
+  const exploring = explore !== null;
+
+  const exitExplore = useCallback(() => {
+    exploreCtl.current?.abort();
+    setExplore(null);
+    setExploreStarting(false);
+    setExploreNote(null);
+  }, []);
+
+  const startExplore = useCallback(() => {
+    exploreCtl.current?.abort();
+    const ctl = new AbortController();
+    exploreCtl.current = ctl;
+    dispatch({ type: "pause" });
+    setExploreStarting(true);
+    setExploreNote(null);
+    const ply = nav.index;
+    api
+      .explore(record.game_id, exploreRequest(ply, []), readToken(), ctl.signal)
+      .then((res) => {
+        if (ctl.signal.aborted) return;
+        const state = beginExplore(ply, res);
+        setExploreStarting(false);
+        if (state) setExplore({ state, pending: false, error: null });
+        else setExploreNote(exploreErrorText(res.error ?? "bad_response"));
+      })
+      .catch((e: unknown) => {
+        if (ctl.signal.aborted) return;
+        setExploreStarting(false);
+        setExploreNote(gameErrorText(e));
+      });
+  }, [nav.index, record.game_id]);
+
+  useEffect(() => () => exploreCtl.current?.abort(), []);
+
+  const onExploreAction = useCallback(
+    (action: Action) => {
+      if (!explore || explore.pending) return;
+      exploreCtl.current?.abort();
+      const ctl = new AbortController();
+      exploreCtl.current = ctl;
+      const { state } = explore;
+      setExplore({ ...explore, pending: true, error: null });
+      api
+        .explore(record.game_id, exploreRequest(state.ply, state.line, action), readToken(), ctl.signal)
+        .then((res) => {
+          if (ctl.signal.aborted) return;
+          const out = extendExplore(state, action, res);
+          setExplore({ state: out.state, pending: false, error: out.error ? exploreErrorText(out.error) : null });
+          const frame = currentResponse(out.state).frame;
+          if (!out.error && frame) sfx.playEvents(frame.events, { me: orientation, actor: opposite(frame.to_move) });
+        })
+        .catch((e: unknown) => {
+          if (ctl.signal.aborted) return;
+          setExplore({ state, pending: false, error: gameErrorText(e) });
+        });
+    },
+    [explore, record.game_id, orientation],
+  );
+
+  const undoExploreMove = useCallback(() => {
+    setExplore((cur) => (cur && !cur.pending ? { state: undoExplore(cur.state), pending: false, error: null } : cur));
+  }, []);
+
+  // ---- position affichée ----
+  const response = explore ? currentResponse(explore.state) : null;
+  const frame = response?.frame ?? record.frames[nav.index];
+  const views = useMemo(() => {
+    if (response?.frame) return exploreViews(record, response.frame, orientation, response.moves, response.skill_options);
+    return { display: frameToView(record, record.frames[nav.index], orientation), play: null };
+  }, [record, response, nav.index, orientation]);
+
+  const interact = useBoardInteraction(
+    views.play,
+    onExploreAction,
+    exploring && !explore.pending,
+    `${nav.index}|${explore?.state.line.length ?? -1}`,
+  );
+
+  // ---- lecture automatique, sons, clavier ----
+  useEffect(() => {
+    if (!nav.playing) return;
+    const timer = setTimeout(() => dispatch({ type: "tick" }), stepDelay(nav.speed));
+    return () => clearTimeout(timer);
+  }, [nav.playing, nav.index, nav.speed]);
+
+  const prevIndex = useRef(nav.index);
+  useEffect(() => {
+    const prev = prevIndex.current;
+    prevIndex.current = nav.index;
+    // Un son par pas en avant ; les sauts et les retours en arrière restent silencieux.
+    if (nav.index !== prev + 1) return;
+    sfx.playEvents(record.frames[nav.index].events, { me: orientation, actor: record.moves[nav.index - 1]?.color });
+    if (nav.index === max) {
+      const end = endSound(record.frames[max].outcome, mine ?? orientation);
+      if (end) sfx.play(end);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nav.index]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!shouldHandleKey({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, target: e.target as HTMLElement | null })) return;
+      if (explore || exploreStarting) {
+        if (e.key === "Escape") exitExplore();
+        return;
+      }
+      if (e.key === "f" || e.key === "F") {
+        setOrientation((o) => opposite(o));
+        return;
+      }
+      const action = keyToNav(e.key);
+      if (!action) return;
+      e.preventDefault();
+      dispatch(action);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [explore, exploreStarting, exitExplore]);
+
+  // Toute navigation dans la partie principale referme l'exploration.
+  const seek = useCallback(
+    (index: number) => {
+      if (exploring || exploreStarting) exitExplore();
+      dispatch({ type: "goto", index });
+    },
+    [exploring, exploreStarting, exitExplore],
+  );
+
+  // ---- dérivés d'affichage ----
+  const move = !exploring && nav.index > 0 ? record.moves[nav.index - 1] : null;
+  const moveAnalysis = move ? byPly.get(nav.index) : undefined;
+  const bestHere = exploring ? (response?.best ?? null) : analysisData && nav.index < max ? (byPly.get(nav.index + 1)?.best ?? null) : null;
+  const arrow = showBest && bestHere ? arrowSquares(bestHere.action) : null;
+  const evalCp = exploring ? (response?.eval_cp ?? null) : series ? series[nav.index] : null;
+  const subject = move && mine === move.color ? "you" : (move?.color ?? "white");
+  const over = frame.outcome.type !== "ongoing";
+  const atEnd = !exploring && nav.index === max;
+
+  const plateProps = (color: Color) => {
+    const used = frame.used[color];
+    return {
+      name: seatName(record[color]),
+      elo: record[color].elo,
+      color,
+      board: frame.board,
+      ownBench: frame.benched.filter((b) => b.owner === color).map((b) => b.piece),
+      rivalBench: frame.benched.filter((b) => b.owner !== color).map((b) => b.piece),
+      clock: { white_ms: 0, black_ms: 0, running: null },
+      clockEnabled: false,
+      stamp: 0,
+      active: frame.to_move === color && !over,
+      used,
+      remaining: Math.max(0, record.loadouts[color].length - used.length),
+      bot: record[color].bot,
+      you: mine === color,
+      clockLabel: "",
+    };
+  };
+
+  let hint: string;
+  let tone = "";
+  if (exploreStarting) hint = "Chargement de la position…";
+  else if (exploring) {
+    hint = explore.pending
+      ? "Le moteur réfléchit…"
+      : interact.activeSkill
+        ? "Choisissez la cible de la compétence."
+        : `Exploration : c'est aux ${COLOR_FR[frame.to_move]} de jouer.`;
+    tone = "skill";
+  } else if (atEnd && over) hint = resultLine(frame.outcome, record.result.reason);
+  else if (frame.in_check) {
+    hint = `Échec : roi ${frame.to_move === "white" ? "blanc" : "noir"} menacé.`;
+    tone = "check";
+  } else hint = nav.index === 0 ? "Position initiale." : `Après le coup ${nav.index} sur ${max} : aux ${COLOR_FR[frame.to_move]} de jouer.`;
+
+  const top = opposite(orientation);
+  const title = `${seatName(record.white)} contre ${seatName(record.black)}`;
+  const skillsDisabled = !exploring || explore.pending;
+
+  return (
+    <main className="rp">
+      <header className="rp-head">
+        <div className="rp-head-main">
+          <p className="eyebrow">Replay</p>
+          <h1 className="rp-title">{title}</h1>
+          <p className="rp-meta">
+            <span className="tag">{kindLabel(record.kind, record.rated)}</span>
+            <span className="muted">{record.plies} coup{record.plies > 1 ? "s" : ""}</span>
+            {record.at && <span className="muted">{relativeTime(record.at)}</span>}
+            <span>{resultLine(record.result.outcome, record.result.reason)}</span>
+          </p>
+        </div>
+        <div className="rp-head-actions">
+          <button type="button" className="btn sm" onClick={() => setOrientation((o) => opposite(o))} aria-pressed={orientation === "black"} aria-keyshortcuts="F" title="Retourner le plateau (F)">
+            Retourner le plateau
+          </button>
+          {exploring ? (
+            <button type="button" className="btn sm" onClick={exitExplore}>
+              Retour à la partie
+            </button>
+          ) : (
+            <button type="button" className="btn sm" onClick={startExplore} disabled={exploreStarting}>
+              {exploreStarting ? "Chargement…" : "Explorer à partir d'ici"}
+            </button>
+          )}
+          <a className="btn sm ghost" href="#/games">
+            Mes parties
+          </a>
+        </div>
+      </header>
+
+      <div className="rp-grid">
+        <section className="rp-center" aria-label="Plateau">
+          <Plate {...plateProps(top)} />
+          <div className={`gm-hint ${tone}`} role="status" aria-live="polite">
+            <span>{hint}</span>
+            {exploring && (
+              <button type="button" className="btn sm ghost" onClick={exitExplore}>
+                Retour à la partie
+              </button>
+            )}
+          </div>
+          {exploreNote && (
+            <p className="rp-inline-error" role="alert">
+              {exploreNote}
+            </p>
+          )}
+
+          <div className="gm-boardrow">
+            {evalCp !== null ? <EngineBar cp={evalCp} orientation={orientation} /> : <EvalBar view={views.display} />}
+            <BoardStage view={views.display} orientation={orientation} interactive={exploring && !explore.pending} highlights={interact.highlights} onSquare={interact.onSquare} arrow={arrow}>
+              {interact.promotion && <PromotionPicker options={interact.promotion.options} onCancel={interact.cancelPromotion} onPick={interact.pickPromotion} />}
+              {interact.spawn && <SpawnPicker skill={interact.spawn.skill} options={interact.spawn.options} onPick={interact.pickSpawn} onCancel={interact.cancelSpawn} />}
+            </BoardStage>
+          </div>
+
+          <Plate {...plateProps(orientation)} />
+          <Controls nav={nav} disabled={exploring || exploreStarting} dispatch={dispatch} />
+          {analysisData && <EvalChart analysis={analysisData} plies={record.plies} index={exploring ? explore.state.ply : nav.index} onSeek={seek} />}
+        </section>
+
+        <aside className="rp-side">
+          {exploring ? (
+            <>
+              <ExplorePanel state={explore.state} pending={explore.pending} error={explore.error} onUndo={undoExploreMove} onExit={exitExplore} />
+              {views.play && (
+                <SkillList slots={views.play.my_skills} view={views.play} myTurn={!skillsDisabled} active={interact.activeSkill} onToggle={interact.toggleSkill} />
+              )}
+            </>
+          ) : (
+            <MovePanel
+              move={move}
+              analysis={moveAnalysis}
+              subject={subject}
+              evalCp={evalCp}
+              bestHere={bestHere}
+              showBest={showBest}
+              onShowBest={setShowBest}
+              onSeeAlternative={() => {
+                setShowBest(true);
+                seek(nav.index - 1);
+              }}
+            />
+          )}
+          <AnalysisPanel
+            record={record}
+            state={analysis}
+            depth={depth}
+            onDepth={setDepth}
+            onAnalyse={() => runAnalysis(depth)}
+            onCancel={cancelAnalysis}
+          />
+          <MoveList moves={record.moves} index={exploring ? explore.state.ply : nav.index} analysis={analysisData} onSelect={seek} />
+          <p className="muted rp-keys">
+            Raccourcis : ← → pour avancer ou reculer, Début / Fin, Espace pour lancer la lecture, F pour retourner le plateau.
+          </p>
+        </aside>
+      </div>
+    </main>
+  );
+}

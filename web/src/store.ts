@@ -16,6 +16,7 @@ import type {
   UserResult,
 } from "./protocol";
 import { sfx } from "./sound";
+import { isLive, reduceSpectator, SPECTATE_ERRORS, startSpectating, type SpectatingState } from "./replay/spectator";
 import { clampElo, readSolo, SOLO_DEFAULT, writeSolo, type SoloSetting } from "./solo";
 
 export interface Toast {
@@ -61,6 +62,8 @@ export interface AppState {
   solo: SoloSetting;
   /** `solo_start` envoyé, partie pas encore créée (le bot répond presque instantanément). */
   soloPending: boolean;
+  /** Partie regardée en tant que spectateur (v4), `null` si on ne regarde rien. */
+  spectating: SpectatingState | null;
 }
 
 /** Valeurs par défaut des champs que d'anciens serveurs n'envoient pas (`clock_enabled`, `opponent.bot`). */
@@ -120,6 +123,7 @@ const initial: AppState = {
   rematch: "none",
   solo: SOLO_DEFAULT,
   soloPending: false,
+  spectating: null,
 };
 
 const ERROR_TEXT: Record<string, string> = {
@@ -131,6 +135,8 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_deck: "Sélection de compétences invalide.",
   replaced: "Ce compte s'est connecté depuis un autre onglet.",
   account_required: "Un compte est nécessaire pour cette action.",
+  spectate_full: "Cette partie a atteint son maximum de spectateurs.",
+  no_such_game: "Cette partie n'existe pas ou est terminée.",
 };
 
 /** Texte français d'une notice serveur. */
@@ -300,6 +306,20 @@ export class Store {
     if (this.state.soloPending) this.set({ soloPending: false });
   }
 
+  /** Regarde une partie en cours ; le serveur répond par `spectate_state` (ou une erreur d'entrée). */
+  spectate(gameId: string) {
+    this.set({ spectating: startSpectating(gameId) });
+    this.send({ type: "spectate", game_id: gameId });
+  }
+
+  /** Quitte le mode spectateur. Les `spectate_state` encore en vol sont ignorés ensuite. */
+  unspectate() {
+    const current = this.state.spectating;
+    if (!current) return;
+    this.set({ spectating: null });
+    if (isLive(current)) this.send({ type: "unspectate" });
+  }
+
   // ---- raccourcis d'actions -------------------------------------------------
 
   offerDraw() {
@@ -352,6 +372,8 @@ export class Store {
           deck: msg.deck,
           pendingReward: msg.pending_reward,
         });
+        // Après une reconnexion, le serveur a oublié le spectateur : on se réinscrit.
+        if (isLive(this.state.spectating)) this.send({ type: "spectate", game_id: this.state.spectating!.gameId });
         break;
       case "friends": {
         const { type: _type, ...friends } = msg;
@@ -413,13 +435,21 @@ export class Store {
           outgoingChallenge: null,
           chat: [],
           rematch: "none",
+          spectating: null,
         });
         break;
       }
       case "state": {
         const { type: _type, ...view } = msg;
         this.clearSoloPending();
-        this.set({ game: normalizeState(view), deckSelect: null });
+        this.set({ game: normalizeState(view), deckSelect: null, spectating: null });
+        break;
+      }
+      case "spectate_state":
+      case "spectate_over":
+      case "spectate_ended": {
+        const next = reduceSpectator(this.state.spectating, msg);
+        if (next !== this.state.spectating) this.set({ spectating: next });
         break;
       }
       case "opponent_status":
@@ -453,6 +483,11 @@ export class Store {
         }
         break;
       case "error":
+        // Les erreurs d'entrée en mode spectateur s'affichent sur l'écran du spectateur, sans toast.
+        if (this.state.spectating?.status === "joining" && SPECTATE_ERRORS.includes(msg.code)) {
+          this.set({ spectating: reduceSpectator(this.state.spectating, msg) });
+          break;
+        }
         this.clearSoloPending();
         if (msg.code === "replaced") this.set({ connection: "replaced" });
         if (msg.code === "illegal_action" || msg.code === "not_your_turn") sfx.play("illegal");

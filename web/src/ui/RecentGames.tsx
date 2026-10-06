@@ -36,6 +36,9 @@ export function RecentGames({ games, limit }: Props) {
               {g.rated ? formatDelta(g.elo_delta) : "—"}
             </span>
             <span className="tag">{g.rated ? "Classée" : "Amicale"}</span>
+            <a className="rg-replay" href={hrefFor({ name: "replay", param: g.game_id })} aria-label={`Revoir la partie contre ${g.opponent ?? "un invité"}`}>
+              Revoir
+            </a>
           </span>
         </li>
       ))}

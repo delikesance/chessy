@@ -3,6 +3,7 @@ import { FAMILY_LABEL } from "../../catalog";
 import { formatDelta, resultFor, resultHeadline } from "../../outcome";
 import type { Color, EloChange, Outcome, PieceKind, SpawnKind } from "../../protocol";
 import { skillInfo } from "../../skills";
+import { navigate } from "../../router";
 import { store } from "../../store";
 import { PieceIcon, SkillArt } from "../../ui/SkillArt";
 
@@ -101,9 +102,11 @@ interface ResultProps {
   elo: EloChange | null;
   rematch: "none" | "offered" | "received";
   onHide: () => void;
+  /** Partie enregistrée : active « Revoir la partie » et « Analyser » (replay, docs/spec-v4.md §5). */
+  gameId?: string;
 }
 
-export function ResultPanel({ outcome, you, rated, solo = false, elo, rematch, onHide }: ResultProps) {
+export function ResultPanel({ outcome, you, rated, solo = false, elo, rematch, onHide, gameId }: ResultProps) {
   const { title, reason } = resultHeadline(outcome, you);
   const result = resultFor(outcome, you);
   const delta = elo ? elo.you_after - elo.you_before : null;
@@ -151,6 +154,30 @@ export function ResultPanel({ outcome, you, rated, solo = false, elo, rematch, o
             <button type="button" className="btn pri" ref={first} disabled={rematch === "offered"} onClick={() => store.requestRematch()}>
               {rematch === "offered" ? (solo ? "Nouvelle partie…" : "Revanche proposée…") : "Revanche"}
             </button>
+          )}
+          {gameId && (
+            <div className="gm-result-row">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  store.leaveGame();
+                  navigate({ name: "replay", param: gameId });
+                }}
+              >
+                Revoir la partie
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  store.leaveGame();
+                  navigate({ name: "replay", param: gameId, sub: "analyse" });
+                }}
+              >
+                Analyser
+              </button>
+            </div>
           )}
           <div className="gm-result-row">
             <button type="button" className="btn ghost" onClick={onHide}>

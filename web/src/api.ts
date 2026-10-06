@@ -1,6 +1,16 @@
 // Client REST typé pour /api (voir docs/spec-v2.md §1). Aucune dépendance au store :
 // les appelants passent le jeton de session quand la route l'exige.
-import type { Leaderboard, Me, PublicProfile } from "./protocol";
+import type {
+  Analysis,
+  ExploreRequest,
+  ExploreResponse,
+  GameRecord,
+  Leaderboard,
+  LiveGames,
+  Me,
+  MyGames,
+  PublicProfile,
+} from "./protocol";
 
 export interface AuthResponse {
   token: string;
@@ -110,4 +120,39 @@ export const api = {
   profile(username: string, signal?: AbortSignal) {
     return request<PublicProfile>(`/players/${encodeURIComponent(username)}`, { signal });
   },
+  // ---- v4 : parties enregistrées, replays, analyse, direct (docs/spec-v4.md §2-§3) ----
+  /** Mes parties, de la plus récente à la plus ancienne (Bearer requis). */
+  myGames(token: string, limit = 20, offset = 0, signal?: AbortSignal) {
+    return request<MyGames>(`/me/games?limit=${limit}&offset=${offset}`, { token, signal });
+  },
+  /** Partie complète avec ses positions. Bearer optionnel : les parties solo ne sont lisibles que par leur joueur. */
+  game(id: string, token?: string, signal?: AbortSignal) {
+    return request<GameRecord>(`/games/${encodeURIComponent(id)}`, { token, signal });
+  },
+  /** Analyse du moteur (peut durer jusqu'à ~25 s, puis mise en cache côté serveur). */
+  analysis(id: string, depth = 3, token?: string, signal?: AbortSignal) {
+    return request<Analysis>(`/games/${encodeURIComponent(id)}/analysis?depth=${depth}`, { token, signal });
+  },
+  /** Exploration sans état : renvoie la position après `ply` actions puis `line`. */
+  explore(id: string, body: ExploreRequest, token?: string, signal?: AbortSignal) {
+    return request<ExploreResponse>(`/games/${encodeURIComponent(id)}/explore`, { method: "POST", body, token, signal });
+  },
+  /** Parties en cours (publiques), triées par Elo moyen puis ancienneté. */
+  live(limit = 50, token?: string, signal?: AbortSignal) {
+    return request<LiveGames>(`/live?limit=${limit}`, { token, signal });
+  },
 };
+
+/** Message français pour une erreur des routes de replay, d'analyse et d'exploration. */
+export function gameErrorText(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "no_replay") return "Replay indisponible pour cette partie.";
+    if (err.status === 404 || err.code === "not_found" || err.code === "no_such_game") return "Partie introuvable.";
+    if (err.status === 403) return "Cette partie n'est pas accessible avec votre compte.";
+    if (err.code === "illegal_action") return "Action impossible dans cette position.";
+    if (err.code === "bad_ply") return "Position introuvable dans cette partie.";
+    if (err.code === "analysis_failed" || err.code === "analysis_timeout") return "L'analyse a échoué. Réessayez avec une profondeur plus faible.";
+    if (err.status === 400) return "Requête invalide.";
+  }
+  return apiErrorText(err);
+}
