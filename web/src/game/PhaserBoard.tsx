@@ -8,14 +8,16 @@ interface Props {
   view: StateView;
   highlights: Highlights;
   onSquare: (square: Square) => void;
+  /** Faux : plateau en lecture seule (replay, spectateur) ; les clics ne sont pas transmis. */
+  interactive?: boolean;
 }
 
-export function PhaserBoard({ view, highlights, onSquare }: Props) {
+export function PhaserBoard({ view, highlights, onSquare, interactive = true }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const scene = useRef<BoardScene | null>(null);
   // Latest props, readable from the deferred game setup and from scene callbacks.
-  const latest = useRef({ view, highlights, onSquare });
-  latest.current = { view, highlights, onSquare };
+  const latest = useRef({ view, highlights, onSquare, interactive });
+  latest.current = { view, highlights, onSquare, interactive };
 
   useEffect(() => {
     let game: Phaser.Game | null = null;
@@ -25,7 +27,9 @@ export function PhaserBoard({ view, highlights, onSquare }: Props) {
     // by a tick lets the throwaway mount be cancelled before anything is built.
     const timer = setTimeout(() => {
       const boardScene = new BoardScene();
-      boardScene.onSquare = (square) => latest.current.onSquare(square);
+      boardScene.onSquare = (square) => {
+        if (latest.current.interactive) latest.current.onSquare(square);
+      };
       boardScene.setView(latest.current.view);
       boardScene.setHighlights(latest.current.highlights);
       scene.current = boardScene;
