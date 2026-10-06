@@ -73,3 +73,33 @@ Routes : `#/live` (liste), `#/watch/<game_id>` (spectateur), `#/games` (Mes part
 - **Exploration** (`POST /api/games/{id}/explore`) : bouton « Explorer à partir d'ici » ; le plateau devient jouable (coups et compétences via `moves`/`skill_options`, glisser-déposer si disponible), variation affichée sous la partie principale, annuler le dernier coup, retour à la partie ; évaluation et meilleur coup du moteur pour chaque position explorée ; toujours stateless (renvoie `line` complète à chaque coup).
 - Depuis l'écran de fin de partie : boutons « Revoir la partie » et « Analyser » (le `game_id` y est déjà connu).
 - Le plateau est réutilisé via `PhaserBoard` avec la nouvelle prop `interactive`. C2 n'édite pas `BoardScene.ts` (sauf si C1 a déjà fusionné et que c'est indispensable : dans ce cas modifications minimales et documentées).
+
+## Notes d'implémentation — spectateurs
+
+Précisions et écarts par rapport au §3, tels que livrés dans `crates/chessy-server/src/hub/spectate.rs` et `api_live.rs`.
+
+### REST
+- `GET /api/live?limit=50` : `limit` entre 1 et 100 (valeur hors bornes ramenée dans l'intervalle, valeur non numérique : `400 {"error":"bad_request"}`). Pas d'authentification. `Seat = {username, elo, bot}` (`bot` toujours présent). `started_at` : ISO 8601 UTC avec `Z`. Tri : somme des Elo décroissante (un invité compte pour 1200), puis ancienneté. `ply` est le `ply` **réel** de la partie (pas celui de l'image retardée). Les parties dont la fin n'a pas encore été retransmise n'y figurent plus ; une partie encore au choix des compétences n'y figure pas.
+- `kind` vaut `duel` (file classée ou amicale), `room` (salle privée), `challenge` (défi d'ami) ou `solo`. Une revanche garde le `kind` de la partie d'origine.
+
+### WebSocket
+- `spectate {game_id}` : erreurs `already_in_game` (le joueur est dans une partie, y compris au choix des compétences), `no_such_game` (inconnue, au choix des compétences, ou déjà terminée même si sa fin n'est pas encore retransmise), `spectate_full` (50). Redemander la partie déjà suivie renvoie simplement l'image courante. Demander une autre partie quitte la précédente. `unspectate {}` ne répond rien et est sans effet si l'on ne regarde rien.
+- Le spectateur reçoit d'abord un `spectate_state` correspondant à la **dernière vue déjà livrée** (donc retardée), `events` vide, horloge rattrapée du temps écoulé depuis sa livraison. Puis un `spectate_state` par action (y compris Mind Reading / Control : `ply` et `to_move` ne changent pas), et à la fin un `spectate_over` (l'outcome est dans la vue ; fin par mat, abandon, temps, nulle acceptée, déconnexion), après quoi le spectateur est libéré (il peut regarder une autre partie).
+- **Compteur** : quand le nombre de spectateurs change, les joueurs reçoivent un `state` complet (`events` vide, champ `spectators`), et les autres spectateurs un `spectate_state` (dernière vue livrée, `events` vide, `spectators` à jour). Le client doit donc tolérer des `spectate_state` répétés avec le même `ply` et sans événement. Le nouvel arrivant n'est pas notifié deux fois. `StateView.spectators` est toujours présent (0 par défaut).
+- Un spectateur qui lance une file (`queue_join`), crée une salle, démarre un solo ou voit un défi / une revanche aboutir quitte la partie regardée **sans message** (le client le sait déjà). Une déconnexion le désinscrit ; une reconnexion avec le même jeton (nouvelle socket qui remplace l'ancienne) renvoie l'image courante.
+- Un spectateur ne peut ni jouer ni discuter : ses `action`, `chat`, `resign`, `offer_draw` reçoivent `not_in_game`.
+- `spectate_ended {reason}` : envoyé si la partie suivie est annulée (`cancel_session`). Dans l'état actuel du serveur une partie qui a démarré n'est jamais annulée (déconnexion = forfait avec `game_over`, donc `spectate_over`) ; ce message est prévu pour le jour où les parties sans coup seront annulées (§1). Tout code qui annule une partie en cours doit passer par `cancel_session`.
+
+### Délai
+- `HubConfig.spectator_delay` : 30 s par défaut, appliqué aux parties entre humains ; les parties solo sont toujours retransmises sans délai (`delay_ms: 0`). La première vue (position initiale) est livrée tout de suite, sans délai (rien à cacher). Chaque vue est mise en file avec son heure d'échéance (`Timer::SpectatorFlush{game_id}`, un par vue) ; l'ordre est préservé, la fin de partie passe par la même file. L'horloge d'une vue retardée est celle du moment de l'action (le client l'interpole à la réception, ce qui correspond bien à la chronologie retardée). `delay_ms` est le délai configuré de la partie.
+- Après la fin de la partie, la partie n'est plus regardable (`no_such_game`) bien que les spectateurs déjà présents reçoivent encore l'historique retardé.
+
+### Vues et informations cachées
+- `SpectatorView` ne contient aucun des champs propres à un joueur (`moves`, `skill_options`, `my_skills`, `traps`, `benched`). `board` et `effects` masquent les pièces invisibles **des deux camps** (et les effets qui leur sont attachés) ; `terrain` est public ; `used` donne les compétences épuisées (`used`) des deux camps.
+- `events` : le filtre existant de `view.rs` est appliqué deux fois (point de vue blanc puis point de vue noir) avec l'ensemble des pièces cachées : un coup d'une pièce invisible n'émet aucun `moved`, `skill_used` d'un `trap`/`invisibility` (ou visant une case cachée) passe à `target: {"kind":"none"}`, `trap_set`, `best_move`, `effect_added{invisible}` ne sont jamais envoyés. `trap_sprung` est public, comme pour un joueur. Comme pour un adversaire, un `benched` / `unbenched` reste visible (la pièce est connue), mais la liste du banc ne l'est jamais.
+
+### Amis
+- `FriendInfo.game_id` : id de la partie en cours de l'ami **seulement si elle est regardable** (phase de jeu, pas le choix des compétences), sinon `null` (toujours présent). Un push de présence est envoyé aux amis quand la partie passe du choix des compétences au jeu.
+
+### Code partagé touché
+`hub.rs` (champs `feeds`/`watching`, `Session.kind`, `GameKind` passé à `create_game_as` / `start_session` / `open_session`, `Rematch.kind` dans `social.rs`, `broadcast_state` devient `&mut self` et publie la vue spectateur, `Timer::SpectatorFlush`), `protocol.rs`, `hub/view.rs` (`spectator_hidden`, `spectator_events`), `app.rs` (deux bras de `handle`, `live_games`), `api.rs` (une route), `lib.rs`. `GameKind` est défini dans `hub/spectate.rs` : l'agent S1 peut le réutiliser pour `games.kind` (`Session::kind()` renvoie `Solo` pour une partie contre le bot).

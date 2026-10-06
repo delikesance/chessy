@@ -522,6 +522,47 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::iso;
+    use crate::hub::{Hub, HubConfig};
+    use crate::protocol::ServerMsg;
+    use crate::store::Store;
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+
+    fn connect(hub: &mut Hub) -> (String, UnboundedReceiver<ServerMsg>) {
+        let (tx, rx) = unbounded_channel();
+        let (id, _) = hub.connect(None, tx).unwrap();
+        (id, rx)
+    }
+
+    #[test]
+    fn a_cancelled_game_tells_its_spectators_and_frees_them() {
+        let mut hub = Hub::new(Store::open(":memory:").unwrap(), HubConfig::default());
+        let (a, _ra) = connect(&mut hub);
+        let (b, _rb) = connect(&mut hub);
+        let (s, mut rs) = connect(&mut hub);
+        hub.queue_join(&a, Some(false));
+        hub.queue_join(&b, Some(false));
+        hub.select_deck(&a, vec![]);
+        hub.select_deck(&b, vec![]);
+        let game_id = hub.player_game[&a].clone();
+        hub.spectate(&s, &game_id);
+        assert_eq!(hub.watcher_count(&game_id), 1);
+        while rs.try_recv().is_ok() {}
+
+        hub.cancel_session(&game_id, "opponent left");
+        let msgs: Vec<ServerMsg> = std::iter::from_fn(|| rs.try_recv().ok()).collect();
+        assert!(matches!(
+            msgs.as_slice(),
+            [ServerMsg::SpectateEnded { reason }] if reason == "opponent left"
+        ));
+        assert_eq!(hub.watcher_count(&game_id), 0);
+        assert!(hub.watching.is_empty());
+        assert!(hub.live_games(10).is_empty());
+        // Free to watch again (and the old game is gone).
+        hub.spectate(&s, &game_id);
+        assert!(
+            matches!(rs.try_recv(), Ok(ServerMsg::Error { code, .. }) if code == "no_such_game")
+        );
+    }
 
     #[test]
     fn formats_unix_times() {
