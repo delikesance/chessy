@@ -2,7 +2,8 @@
 
 use std::time::Instant;
 
-use super::{GameKind, Hub, Timer};
+use super::{Hub, Timer};
+use crate::games_store::GameKind;
 use crate::protocol::*;
 use crate::social::{RemoveOutcome, RequestOutcome, RespondOutcome};
 use crate::store::{PlayerRow, StoreError};
@@ -20,12 +21,12 @@ pub(super) struct Challenge {
 pub(super) struct Rematch {
     pub opponent: PlayerId,
     rated: bool,
+    kind: GameKind,
     /// Who played white last time; colours swap.
     white: PlayerId,
     requested_by: Option<PlayerId>,
     /// A rematch against the Solo bot: granted at once, see `solo`.
     pub solo: Option<super::solo::SoloSetup>,
-    kind: GameKind,
 }
 
 impl Rematch {
@@ -34,10 +35,10 @@ impl Rematch {
         Rematch {
             opponent: bot.clone(),
             rated: false,
+            kind: GameKind::Solo,
             white: bot,
             requested_by: None,
             solo: Some(setup),
-            kind: GameKind::Solo,
         }
     }
 }
@@ -339,7 +340,7 @@ impl Hub {
             let name = challenger.username.unwrap_or_default();
             return self.notice(player, "challenge_expired", Some(&name));
         }
-        self.create_game_as(
+        self.create_game(
             challenger.id,
             player.to_string(),
             false,
@@ -443,10 +444,10 @@ impl Hub {
                 Rematch {
                     opponent: players[1 - i].clone(),
                     rated,
+                    kind,
                     white: players[0].clone(),
                     requested_by: None,
                     solo: None,
-                    kind,
                 },
             );
         }
@@ -523,8 +524,7 @@ impl Hub {
             return;
         };
         let r = &self.rematches[player];
-        let rated = r.rated;
-        let kind = r.kind;
+        let (rated, kind) = (r.rated, r.kind);
         let (white, black) = if r.white == player {
             (opponent, player.to_string())
         } else {

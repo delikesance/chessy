@@ -4,13 +4,14 @@
 
 use std::sync::{Arc, Mutex};
 
-use chessy_engine::{Color, Outcome, SkillId, SkillKind};
+use chessy_engine::{Action, Color, Outcome, SkillId, SkillKind};
 use rand::seq::IndexedRandom;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::elo::{self, START_ELO};
+use crate::games_store::GameKind;
 use crate::protocol::{Me, PlayerId};
 
 pub const STARTER_DECK_SIZE: usize = 3;
@@ -148,6 +149,14 @@ pub struct GameRecord<'a> {
     pub rated: bool,
     /// Unix time the game started (after deck selection).
     pub started_unix: i64,
+    /// How the game came about.
+    pub kind: GameKind,
+    /// The skills each side brought, in the order the game was created with.
+    pub loadouts: &'a [Vec<SkillId>; 2],
+    /// Every action played, in order (skills that keep the turn included).
+    pub actions: &'a [Action],
+    /// Solo: the level of the bot, whose seat (`white` or `black`) is not a player.
+    pub solo_elo: Option<i32>,
 }
 
 /// Rating movement of one game, by colour.
@@ -261,6 +270,45 @@ const MIGRATIONS: &[&str] = &[
          CHECK (user_a < user_b)
      );
      CREATE INDEX friendships_b ON friendships(user_b);",
+    // Replays (docs/spec-v4.md §1): every game keeps its loadouts and actions,
+    // and Solo games are recorded too, so `games` is rebuilt with nullable
+    // seats (the bot has no player row). Rows from before have no `actions`:
+    // their replay is unavailable. Analyses are cached per (game, depth).
+    "CREATE TABLE games_v3 (
+         id TEXT PRIMARY KEY,
+         white TEXT REFERENCES players(id),
+         black TEXT REFERENCES players(id),
+         outcome TEXT NOT NULL,
+         finished_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         rated INTEGER NOT NULL DEFAULT 0,
+         reason TEXT NOT NULL DEFAULT '',
+         plies INTEGER NOT NULL DEFAULT 0,
+         white_elo_before INTEGER,
+         white_elo_after INTEGER,
+         black_elo_before INTEGER,
+         black_elo_after INTEGER,
+         started_at TEXT,
+         kind TEXT NOT NULL DEFAULT 'duel',
+         loadouts TEXT,
+         actions TEXT,
+         solo_elo INTEGER
+     );
+     INSERT INTO games_v3 (id, white, black, outcome, finished_at, rated, reason, plies,
+             white_elo_before, white_elo_after, black_elo_before, black_elo_after, started_at)
+         SELECT id, white, black, outcome, finished_at, rated, reason, plies,
+             white_elo_before, white_elo_after, black_elo_before, black_elo_after, started_at
+         FROM games;
+     DROP TABLE games;
+     ALTER TABLE games_v3 RENAME TO games;
+     CREATE INDEX games_white ON games(white);
+     CREATE INDEX games_black ON games(black);
+     CREATE TABLE game_analysis (
+         game_id TEXT NOT NULL,
+         depth INTEGER NOT NULL,
+         result TEXT NOT NULL,
+         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+         PRIMARY KEY (game_id, depth)
+     );",
 ];
 
 fn migrate(conn: &mut Connection) -> StoreResult<()> {
@@ -563,7 +611,9 @@ impl Store {
     }
 
     /// Logs a finished game. When it is rated, ratings and counters change in
-    /// the same transaction and the movement is returned.
+    /// the same transaction and the movement is returned. Every game keeps its
+    /// loadouts and actions so it can be replayed; a Solo game has one seat
+    /// that is the bot (stored as NULL).
     pub fn record_game(&self, rec: &GameRecord) -> StoreResult<Option<EloChange>> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -572,24 +622,52 @@ impl Store {
         } else {
             None
         };
+        let seat = |id: &str| (!crate::bot::is_bot_id(id)).then(|| id.to_string());
+        let (white, black) = (seat(rec.white), seat(rec.black));
+        // The rating each account had going in, also for games that move no
+        // rating (the replay list shows it). Guests have none.
+        let elo_before = |id: &Option<String>| -> StoreResult<Option<i32>> {
+            let Some(id) = id else { return Ok(None) };
+            Ok(tx
+                .query_row(
+                    "SELECT elo FROM players WHERE id = ?1 AND username IS NOT NULL",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .optional()?)
+        };
+        let (white_before, black_before) = match change {
+            Some(c) => (Some(c.white_before), Some(c.black_before)),
+            None => (elo_before(&white)?, elo_before(&black)?),
+        };
+        let loadouts = serde_json::json!({
+            "white": rec.loadouts[0],
+            "black": rec.loadouts[1],
+        });
         tx.execute(
             "INSERT INTO games (id, white, black, outcome, finished_at, rated, reason, plies,
-                 white_elo_before, white_elo_after, black_elo_before, black_elo_after, started_at)
+                 white_elo_before, white_elo_after, black_elo_before, black_elo_after, started_at,
+                 kind, loadouts, actions, solo_elo)
              VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?5, ?6, ?7,
-                 ?8, ?9, ?10, ?11, strftime('%Y-%m-%dT%H:%M:%SZ', ?12, 'unixepoch'))",
+                 ?8, ?9, ?10, ?11, strftime('%Y-%m-%dT%H:%M:%SZ', ?12, 'unixepoch'),
+                 ?13, ?14, ?15, ?16)",
             params![
                 rec.id,
-                rec.white,
-                rec.black,
+                white,
+                black,
                 serde_json::to_string(rec.outcome).unwrap(),
                 rec.rated,
                 rec.reason,
                 rec.plies,
-                change.map(|c| c.white_before),
+                white_before,
                 change.map(|c| c.white_after),
-                change.map(|c| c.black_before),
+                black_before,
                 change.map(|c| c.black_after),
                 rec.started_unix,
+                rec.kind.as_str(),
+                loadouts.to_string(),
+                serde_json::to_string(rec.actions).unwrap(),
+                rec.solo_elo,
             ],
         )?;
         tx.commit()?;
@@ -847,7 +925,7 @@ fn player_games(
                      ELSE g.black_elo_after - g.black_elo_before END,
                 strftime('%Y-%m-%dT%H:%M:%SZ', g.finished_at)
          FROM games g JOIN players opp ON opp.id = CASE WHEN g.white = ?1 THEN g.black ELSE g.white END
-         WHERE (g.white = ?1 OR g.black = ?1) {}
+         WHERE (g.white = ?1 OR g.black = ?1) AND g.kind != 'solo' {}
          ORDER BY g.rowid DESC LIMIT ?2",
         if rated_only { "AND g.rated = 1" } else { "" }
     );

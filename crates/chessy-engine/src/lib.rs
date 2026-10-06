@@ -5,7 +5,9 @@
 //! repetition tracking on top.
 
 pub mod ai;
+pub mod analysis;
 pub mod game;
+pub mod notation;
 pub mod position;
 pub mod search;
 pub mod skills;

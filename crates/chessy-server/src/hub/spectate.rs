@@ -18,25 +18,11 @@ use std::time::{Duration, Instant};
 use chessy_engine::{ActiveEffect, Color, Event, Game, Outcome, Piece, SkillId};
 use serde::Serialize;
 
-use super::{view, Hub, Phase, Session, Timer};
+use super::{view, GameKind, Hub, Phase, Session, Timer};
 use crate::protocol::*;
 
 /// Spectators allowed on one game.
 pub const MAX_SPECTATORS: usize = 50;
-
-/// How a game came about.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GameKind {
-    /// Matchmaking queue (ranked or casual).
-    Duel,
-    /// Friend challenge.
-    Challenge,
-    /// Private room.
-    Room,
-    /// Against the bot.
-    Solo,
-}
 
 /// One side of a game as the public sees it.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -222,7 +208,7 @@ impl Session {
         if self.solo.is_some() {
             GameKind::Solo
         } else {
-            self.kind
+            self.recording.kind
         }
     }
 }

@@ -10,7 +10,7 @@ mod solo;
 mod spectate;
 mod view;
 
-pub use spectate::{GameKind, LiveGame, LiveSeat, SpectatorView, UsedSkills, MAX_SPECTATORS};
+pub use spectate::{LiveGame, LiveSeat, SpectatorView, UsedSkills, MAX_SPECTATORS};
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -19,6 +19,7 @@ use chessy_engine::{Action, Color, Game, Outcome, SkillId, SkillKind, SkillTarge
 use rand::seq::{IndexedRandom, SliceRandom};
 use tokio::sync::mpsc::UnboundedSender;
 
+pub use crate::games_store::GameKind;
 use crate::protocol::*;
 use crate::store::{reason_of, GameRecord, Store, StoreError};
 
@@ -176,6 +177,13 @@ impl Clock {
     }
 }
 
+/// What a session keeps so the finished game can be recorded and replayed.
+struct Recording {
+    kind: GameKind,
+    /// Every action applied so far, skills that keep the turn included.
+    actions: Vec<Action>,
+}
+
 struct Session {
     /// Indexed by `Color::index()`.
     players: [PlayerId; 2],
@@ -196,8 +204,7 @@ struct Session {
     /// Set for a Solo game: one seat is the bot (its `players` entry is a
     /// synthetic id that is never connected and has no account).
     solo: Option<solo::Solo>,
-    /// How the game came about; read through `Session::kind()` (Solo wins).
-    kind: GameKind,
+    recording: Recording,
 }
 
 impl Session {
@@ -607,7 +614,7 @@ impl Hub {
                 self.ensure_sweep();
             }
             _ => match self.casual_queue.pop_front() {
-                Some(other) => self.create_game(other, player.to_string(), false),
+                Some(other) => self.create_game(other, player.to_string(), false, GameKind::Duel),
                 None => self.casual_queue.push_back(player.to_string()),
             },
         }
@@ -642,7 +649,7 @@ impl Hub {
             let Some((i, j, _)) = best else { return };
             let second = self.ranked_queue.remove(j);
             let first = self.ranked_queue.remove(i);
-            self.create_game(first.player, second.player, true);
+            self.create_game(first.player, second.player, true, GameKind::Duel);
         }
     }
 
@@ -686,7 +693,7 @@ impl Hub {
             Some(_) => {
                 let host = self.rooms.remove(&code).expect("room checked above");
                 self.leave_lobby_silently(player);
-                self.create_game_as(host, player.to_string(), false, GameKind::Room);
+                self.create_game(host, player.to_string(), false, GameKind::Room);
             }
         }
     }
@@ -704,11 +711,7 @@ impl Hub {
     // ---- game setup ------------------------------------------------------
 
     /// Starts a game between two players with random colours.
-    fn create_game(&mut self, a: PlayerId, b: PlayerId, rated: bool) {
-        self.create_game_as(a, b, rated, GameKind::Duel);
-    }
-
-    fn create_game_as(&mut self, a: PlayerId, b: PlayerId, rated: bool, kind: GameKind) {
+    fn create_game(&mut self, a: PlayerId, b: PlayerId, rated: bool, kind: GameKind) {
         let (white, black) = if rand::random_bool(0.5) {
             (a, b)
         } else {
@@ -720,7 +723,7 @@ impl Hub {
     /// Opens deck selection for two players, clearing whatever else they
     /// were doing: lobby spots, challenges, rematches and unclaimed rewards.
     fn start_session(&mut self, white: PlayerId, black: PlayerId, rated: bool, kind: GameKind) {
-        self.open_session(white, black, rated, None, kind);
+        self.open_session(white, black, rated, kind, None);
     }
 
     /// [`Self::start_session`], optionally against the bot: for a Solo game
@@ -731,8 +734,8 @@ impl Hub {
         mut white: PlayerId,
         mut black: PlayerId,
         rated: bool,
-        solo: Option<solo::Solo>,
         kind: GameKind,
+        solo: Option<solo::Solo>,
     ) {
         self.next_game += 1;
         let game_id = format!(
@@ -785,8 +788,15 @@ impl Hub {
             clock: None,
             draw_offer: None,
             last_offer_ply: [None, None],
+            recording: Recording {
+                kind: if seat_solo.is_some() {
+                    GameKind::Solo
+                } else {
+                    kind
+                },
+                actions: Vec::new(),
+            },
             solo: seat_solo,
-            kind,
         };
         for player in &humans {
             self.player_game.insert((*player).clone(), game_id.clone());
@@ -923,7 +933,7 @@ impl Hub {
         if !matches!(session.phase, Phase::DeckSelect { .. }) {
             return self.fail(player, "not_in_deck_select", "the game has already started");
         }
-        let requeue = session.solo.is_none() && session.kind == GameKind::Duel;
+        let requeue = session.solo.is_none() && session.recording.kind == GameKind::Duel;
         let rated = session.rated;
         let other = session
             .players
@@ -990,7 +1000,7 @@ impl Hub {
                 self.ensure_sweep();
             }
             None => match self.casual_queue.pop_front() {
-                Some(other) => self.create_game(other, player.to_string(), false),
+                Some(other) => self.create_game(other, player.to_string(), false, GameKind::Duel),
                 None => self.casual_queue.push_front(player.to_string()),
             },
         }
@@ -1060,6 +1070,7 @@ impl Hub {
             Ok(events) => events,
             Err(_) => return self.fail(player, "illegal_action", "that action is not allowed"),
         };
+        session.recording.actions.push(action);
         let outcome = game.outcome();
         if game.side_to_move() == color && !outcome.is_over() {
             // Mind Reading / Mind Control keep the turn: same player, same
@@ -1240,33 +1251,47 @@ impl Hub {
         for player in &session.players {
             self.player_game.remove(player);
         }
-        let plies = match &session.phase {
-            Phase::Playing { game } => game.pos.ply,
-            Phase::DeckSelect { .. } => 0,
+        // `pos.ply` decides whether the game is long enough to be rated; the
+        // number of actions (what a replay has) is what gets stored.
+        let (ply, loadouts) = match &session.phase {
+            Phase::Playing { game } => (
+                game.pos.ply,
+                Some([
+                    game.loadouts[0].slots.iter().map(|s| s.skill).collect(),
+                    game.loadouts[1].slots.iter().map(|s| s.skill).collect(),
+                ]),
+            ),
+            Phase::DeckSelect { .. } => (0, None),
         };
         let [white, black] = &session.players;
-        let record = GameRecord {
-            id: game_id,
-            white,
-            black,
-            outcome: &outcome,
-            reason,
-            plies,
-            rated: session.rated && plies >= MIN_RATED_PLIES,
-            started_unix: session.started_unix,
-        };
-        // Solo games are not recorded (see `solo`): no Elo, no public history.
         let solo = session.solo.is_some();
-        let change = if solo {
-            None
-        } else {
-            match self.store.record_game(&record) {
-                Ok(change) => change,
-                Err(e) => {
-                    tracing::error!("could not record game {game_id}: {e}");
-                    None
+        let change = match &loadouts {
+            // Every game that was played is recorded, Solo ones included (they
+            // stay out of the profile and the ranking, see `store`).
+            Some(loadouts) => {
+                let record = GameRecord {
+                    id: game_id,
+                    white,
+                    black,
+                    outcome: &outcome,
+                    reason,
+                    plies: session.recording.actions.len() as u32,
+                    rated: session.rated && ply >= MIN_RATED_PLIES,
+                    started_unix: session.started_unix,
+                    kind: session.recording.kind,
+                    loadouts,
+                    actions: &session.recording.actions,
+                    solo_elo: session.solo.map(|s| s.elo),
+                };
+                match self.store.record_game(&record) {
+                    Ok(change) => change,
+                    Err(e) => {
+                        tracing::error!("could not record game {game_id}: {e}");
+                        None
+                    }
                 }
             }
+            None => None,
         };
         let winner = outcome.winner();
         for color in Color::BOTH {
@@ -1317,7 +1342,7 @@ impl Hub {
         if solo {
             self.offer_solo_rematch(&session);
         } else {
-            self.offer_rematch(&session.players, session.rated, session.kind);
+            self.offer_rematch(&session.players, session.rated, session.recording.kind);
         }
         for player in &session.players {
             self.notify_presence(player);

@@ -1,10 +1,14 @@
+pub mod analysis;
 pub mod api;
+pub mod api_games;
 pub mod api_live;
 pub mod app;
 pub mod bot;
 pub mod elo;
+pub mod games_store;
 pub mod hub;
 pub mod protocol;
+pub mod replay;
 pub mod social;
 pub mod store;
 pub mod ws;
@@ -21,6 +25,6 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/healthz", get(|| async { "ok" }))
-        .nest("/api", api::routes())
+        .nest("/api", api::routes().merge(api_games::routes()))
         .with_state(app)
 }
