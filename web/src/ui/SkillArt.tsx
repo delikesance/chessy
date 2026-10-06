@@ -122,20 +122,20 @@ export function SkillSprite() {
         <path d="M54 106h56" />
       </symbol>
 
-      <symbol id="sk-switch_sides" viewBox="0 0 120 120">
+      <symbol id="sk-switch" viewBox="0 0 120 120">
         <use href="#p-pawn" transform="translate(2 12) scale(.8)" fill="currentColor" />
         <use href="#p-pawn" transform="translate(72 12) scale(.8)" />
         <path d="M22 86h76M34 74L22 86l12 12M86 74l12 12-12 12" />
       </symbol>
 
-      <symbol id="sk-mind_reading" viewBox="0 0 120 120">
+      <symbol id="sk-mind" viewBox="0 0 120 120">
         <path d="M8 60Q60 8 112 60 60 112 8 60z" />
         <circle cx="60" cy="60" r="17" />
         <circle cx="60" cy="60" r="6" fill="currentColor" />
         <path d="M60 4v10M24 18l6 8M96 18l-6 8" />
       </symbol>
 
-      <symbol id="sk-mind_control" viewBox="0 0 120 120">
+      <symbol id="sk-control" viewBox="0 0 120 120">
         <path d="M30 12h60M60 12v12" />
         <path d="M34 12l20 40M86 12L66 52M60 24v28" />
         <use href="#p-pawn" transform="translate(30 50)" />
@@ -176,18 +176,18 @@ export function SkillSprite() {
         <use href="#p-pawn" transform="translate(37 38) scale(.76)" />
       </symbol>
 
-      <symbol id="sk-trap_card" viewBox="0 0 120 120">
+      <symbol id="sk-trap" viewBox="0 0 120 120">
         <rect x="18" y="18" width="84" height="84" rx="8" />
         <path d="M18 54l10 14 10-14 10 14 10-14 10 14 10-14 10 14 10-14 4 6" />
         <path d="M18 78l10-12 10 12 10-12 10 12 10-12 10 12 10-12 14 18" />
       </symbol>
 
-      <symbol id="sk-the_bench" viewBox="0 0 120 120">
+      <symbol id="sk-bench" viewBox="0 0 120 120">
         <use href="#p-pawn" transform="translate(38 14) scale(.8)" />
         <path d="M10 66h100M20 66v34M100 66v34M10 78h100" />
       </symbol>
 
-      <symbol id="sk-force_field" viewBox="0 0 120 120">
+      <symbol id="sk-forcefield" viewBox="0 0 120 120">
         <circle cx="60" cy="60" r="36" />
         <use href="#p-pawn" transform="translate(36 36) scale(.8)" />
         <path d="M94 26l12-12M106 24V14h-10M26 26L14 14M14 24V14h10M94 94l12 12M106 96v10H96M26 94l-12 12M14 96v10h10" />
@@ -202,13 +202,13 @@ export function SkillSprite() {
         <path d="M98 88Q60 118 22 88M30 96l-10-8 12-4" />
       </symbol>
 
-      <symbol id="sk-queen_sacrifice" viewBox="0 0 120 120">
+      <symbol id="sk-queensac" viewBox="0 0 120 120">
         <use href="#p-queen" transform="translate(16 12) scale(1.45)" />
         <path d="M12 106h96" />
         <path d="M52 40l-8 14 10 8-6 14" />
       </symbol>
 
-      <symbol id="sk-temporal_distortion" viewBox="0 0 120 120">
+      <symbol id="sk-temporal" viewBox="0 0 120 120">
         <path d="M32 12h56M32 108h56" />
         <path d="M38 12c0 30 22 36 22 48s-22 18-22 48M82 12c0 30-22 36-22 48s22 18 22 48" />
         <path d="M48 98q12-8 24 0M54 40h12M60 60v10" />
@@ -220,14 +220,14 @@ export function SkillSprite() {
         <path d="M8 98h104M20 110h80" />
       </symbol>
 
-      <symbol id="sk-celestial_intervention" viewBox="0 0 120 120">
+      <symbol id="sk-celestial" viewBox="0 0 120 120">
         <ellipse cx="60" cy="14" rx="18" ry="6" />
         <use href="#p-pawn" transform="translate(30 30) scale(.85)" />
         <path d="M14 20l12 14M106 20L94 34M60 24v-2" />
         <path d="M18 110h84" />
       </symbol>
 
-      <symbol id="sk-god_help" viewBox="0 0 120 120">
+      <symbol id="sk-godhelp" viewBox="0 0 120 120">
         <rect x="22" y="30" width="70" height="70" rx="12" />
         <circle cx="42" cy="50" r="4" fill="currentColor" />
         <circle cx="72" cy="50" r="4" fill="currentColor" />

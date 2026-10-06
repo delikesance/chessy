@@ -59,7 +59,7 @@ export function RewardModal({ offer }: { offer: RewardOffer }) {
               onClick={() => setPick({ kind: "random" })}
             >
               <span className="skc-art">
-                <SkillArt id="god_help" size={46} family="create" />
+                <SkillArt id="godhelp" size={46} family="create" />
               </span>
               <span className="skc-body">
                 <span className="skc-name">Compétence aléatoire</span>

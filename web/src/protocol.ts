@@ -12,13 +12,44 @@ export type SkillId =
   | "rollback"
   | "clone"
   | "destiny_swapper"
-  | "remover";
+  | "remover"
+  | "wall"
+  | "mirage"
+  | "evolve"
+  | "switch"
+  | "mind"
+  | "control"
+  | "morph"
+  | "canceller"
+  | "tornado"
+  | "invisibility"
+  | "terminator"
+  | "trap"
+  | "bench"
+  | "forcefield"
+  | "transposition"
+  | "queensac"
+  | "temporal"
+  | "geomancy"
+  | "celestial"
+  | "godhelp";
 
 export interface Piece {
   id: number;
   kind: PieceKind;
   color: Color;
+  /** Case de départ (toujours présente côté serveur v3). */
+  home?: Square;
+  /** Mirage : ne capture ni n'attaque, disparaît quand elle est prise. */
+  mirage?: boolean;
+  /** Pion-mur (Wall). */
+  wall?: boolean;
+  /** Pièce temporaire (Terminator, God Help). */
+  temp?: boolean;
 }
+
+/** Types de pièce proposables par Mirage et Morph. */
+export type SpawnKind = Exclude<PieceKind, "king">
 
 export interface Move {
   from: Square;
@@ -29,18 +60,41 @@ export interface Move {
 export type SkillTarget =
   | { kind: "none" }
   | { kind: "piece"; square: Square }
+  | { kind: "square"; square: Square }
   | { kind: "piece_to"; from: Square; to: Square }
-  | { kind: "pair"; a: Square; b: Square };
+  | { kind: "pair"; a: Square; b: Square }
+  /** Mirage / Morph : le type de pièce s'appelle `piece` dans le JSON (`kind` est le tag). */
+  | { kind: "spawn"; square: Square; piece: SpawnKind };
 
 export type Action =
   | { type: "move"; from: Square; to: Square; promo?: PieceKind }
   | { type: "skill"; skill: SkillId; target: SkillTarget };
 
-export type EffectKind = "immune" | "frozen";
+export type EffectKind =
+  | "immune"
+  | "frozen"
+  | "invisible"
+  | "forcefield"
+  | "celestial"
+  | "locked"
+  | "morphed"
+  | "color_loan"
+  | "vanish";
+
+/** Les effets sans fin (Force Field, Celestial) ont `expires_at = 4294967295`. */
+export const NEVER_EXPIRES = 4_294_967_295;
 
 export interface ActiveEffect {
   kind: EffectKind;
   piece: number;
+  expires_at: number;
+  orig_kind?: PieceKind;
+  orig_color?: Color;
+}
+
+export interface Terrain {
+  square: Square;
+  owner: Color;
   expires_at: number;
 }
 
@@ -55,7 +109,23 @@ export type GameEvent =
   | { type: "swapped"; a: Square; b: Square }
   | { type: "removed"; square: Square; piece: Piece }
   | { type: "rolled_back"; from: Square; to: Square }
-  | { type: "effect_added"; piece: number; effect: EffectKind; expires_at: number };
+  | { type: "effect_added"; piece: number; effect: EffectKind; expires_at: number }
+  | { type: "spawned"; square: Square; piece: Piece }
+  | { type: "transformed"; square: Square; kind: PieceKind }
+  | { type: "switched"; square: Square; piece: Piece }
+  | { type: "rotated"; moves: { from: Square; to: Square }[] }
+  | { type: "trap_set"; square: Square }
+  | { type: "trap_sprung"; square: Square; piece: number }
+  | { type: "benched"; square: Square; piece: Piece }
+  | { type: "unbenched"; square: Square; piece: Piece }
+  | { type: "pushed"; piece: number; from: Square; to: Square }
+  | { type: "saved"; piece: number; from: Square; to: Square }
+  /** N'est envoyé qu'à l'auteur de Mind Reading. */
+  | { type: "best_move"; from: Square; to: Square; promo?: PieceKind }
+  | { type: "cancelled"; skill: SkillId }
+  | { type: "terrain"; squares: Square[] }
+  | { type: "vanished"; square: Square; piece: Piece }
+  | { type: "loan_ended"; square: Square; piece: Piece };
 
 export type Outcome =
   | { type: "ongoing" }
@@ -71,6 +141,10 @@ export type Outcome =
 export interface SkillSlot {
   skill: SkillId;
   used: boolean;
+  /** Usages déjà consommés (absent = serveur ancien : 0 ou 1 selon `used`). */
+  uses?: number;
+  /** Usages permis (3 pour Mind Reading, 1 sinon). */
+  max_uses?: number;
 }
 
 export interface SkillOptions {
@@ -111,6 +185,11 @@ export interface StateView {
   my_skills: SkillSlot[];
   opponent_skills: { total: number; used: SkillId[] };
   effects: ActiveEffect[];
+  /** Cases piégées par le joueur (les siennes uniquement). */
+  traps: Square[];
+  /** Ses pièces actuellement sur le banc. */
+  benched: Piece[];
+  terrain: Terrain[];
   outcome: Outcome;
   events: GameEvent[];
   opponent_connected: boolean;

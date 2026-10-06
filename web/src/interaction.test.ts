@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { click, highlights, IDLE, startSkill, type Interaction } from "./interaction";
+import {
+  activateSkill,
+  cancelSpawn,
+  chooseSpawn,
+  click,
+  highlights,
+  IDLE,
+  startSkill,
+  targetHint,
+  targetShape,
+  type Interaction,
+} from "./interaction";
 import type { SkillTarget, StateView } from "./protocol";
 
 function view(partial: Partial<StateView>): StateView {
@@ -21,6 +32,9 @@ function view(partial: Partial<StateView>): StateView {
     my_skills: [],
     opponent_skills: { total: 0, used: [] },
     effects: [],
+    traps: [],
+    benched: [],
+    terrain: [],
     outcome: { type: "ongoing" },
     events: [],
     opponent_connected: true,
@@ -129,5 +143,117 @@ describe("skills", () => {
     expect(startSkill(view({}), "freeze")).toEqual(IDLE);
     const v = view({ to_move: "black", skill_options: [{ skill: "freeze", targets: [piece(1)] }] });
     expect(startSkill(v, "freeze")).toEqual(IDLE);
+  });
+});
+
+describe("new target shapes", () => {
+  it("casts a `square` skill with one click on an empty square", () => {
+    const v = view({
+      skill_options: [{ skill: "trap", targets: [{ kind: "square", square: 20 }, { kind: "square", square: 21 }] }],
+    });
+    const it = startSkill(v, "trap");
+    expect(it).toEqual({ kind: "skill", skill: "trap", first: null });
+    expect(highlights(v, it).selectable).toEqual([20, 21]);
+    expect(targetShape(v, "trap")).toBe("square");
+    const r = click(v, it, 21);
+    expect(r.send).toEqual({ type: "skill", skill: "trap", target: { kind: "square", square: 21 } });
+    expect(r.interaction).toEqual(IDLE);
+    expect(click(v, it, 3).send).toBeUndefined();
+  });
+
+  it("launches a `none` skill straight from the skill button", () => {
+    const v = view({ skill_options: [{ skill: "tornado", targets: [{ kind: "none" }] }] });
+    expect(startSkill(v, "tornado")).toEqual(IDLE);
+    const r = activateSkill(v, IDLE, "tornado");
+    expect(r.send).toEqual({ type: "skill", skill: "tornado", target: { kind: "none" } });
+    expect(r.interaction).toEqual(IDLE);
+    expect(activateSkill({ ...v, to_move: "black" }, IDLE, "tornado").send).toBeUndefined();
+    expect(activateSkill({ ...v, outcome: { type: "stalemate" } }, IDLE, "tornado").send).toBeUndefined();
+  });
+
+  it("arms a targeted skill on activation and disarms it on a second click", () => {
+    const v = view({ skill_options: [{ skill: "evolve", targets: [{ kind: "piece", square: 8 }] }] });
+    const armed = activateSkill(v, IDLE, "evolve");
+    expect(armed.interaction).toEqual({ kind: "skill", skill: "evolve", first: null });
+    expect(armed.send).toBeUndefined();
+    expect(activateSkill(v, armed.interaction, "evolve").interaction).toEqual(IDLE);
+    expect(activateSkill(view({}), IDLE, "evolve")).toEqual({ interaction: IDLE });
+  });
+
+  it("targets a `spawn` skill in two steps: the square, then the piece type", () => {
+    const spawn = (square: number, piece: "knight" | "bishop" | "rook" | "queen"): SkillTarget => ({
+      kind: "spawn",
+      square,
+      piece,
+    });
+    const v = view({
+      skill_options: [
+        {
+          skill: "mirage",
+          targets: [spawn(20, "knight"), spawn(20, "bishop"), spawn(20, "rook"), spawn(20, "queen"), spawn(21, "knight")],
+        },
+      ],
+    });
+    const it = startSkill(v, "mirage");
+    expect(highlights(v, it)).toEqual({ selectable: [20, 21], selected: null, targets: [] });
+    const r = click(v, it, 20);
+    expect(r.send).toBeUndefined();
+    expect(r.interaction).toEqual({ kind: "skill", skill: "mirage", first: 20 });
+    expect(r.spawn).toEqual({ skill: "mirage", square: 20, options: ["knight", "bishop", "rook", "queen"] });
+    expect(highlights(v, r.interaction).selected).toBe(20);
+
+    const done = chooseSpawn(r.spawn!, "rook");
+    expect(done.send).toEqual({ type: "skill", skill: "mirage", target: { kind: "spawn", square: 20, piece: "rook" } });
+    expect(done.interaction).toEqual(IDLE);
+    expect(cancelSpawn(r.spawn!)).toEqual({ kind: "skill", skill: "mirage", first: null });
+  });
+
+  it("morph offers the types legal for each piece and skips the picker when only one is left", () => {
+    const v = view({
+      skill_options: [
+        {
+          skill: "morph",
+          targets: [
+            { kind: "spawn", square: 8, piece: "knight" },
+            { kind: "spawn", square: 8, piece: "queen" },
+            { kind: "spawn", square: 9, piece: "pawn" },
+          ],
+        },
+      ],
+    });
+    const it = startSkill(v, "morph");
+    expect(click(v, it, 8).spawn?.options).toEqual(["knight", "queen"]);
+    const single = click(v, it, 9);
+    expect(single.spawn).toBeUndefined();
+    expect(single.send).toEqual({ type: "skill", skill: "morph", target: { kind: "spawn", square: 9, piece: "pawn" } });
+  });
+
+  it("backs out of the type picker back to the square choice", () => {
+    const v = view({
+      skill_options: [
+        { skill: "mirage", targets: [{ kind: "spawn", square: 20, piece: "knight" }, { kind: "spawn", square: 20, piece: "rook" }] },
+      ],
+    });
+    const picked: Interaction = { kind: "skill", skill: "mirage", first: 20 };
+    expect(click(v, picked, 63).interaction).toEqual({ kind: "skill", skill: "mirage", first: null });
+  });
+
+  it("describes what to pick next", () => {
+    expect(targetHint("square", null, false)).toBe("choisissez une case vide.");
+    expect(targetHint("spawn", null, false)).toMatch(/case/);
+    expect(targetHint("spawn", 20, true)).toBe("choisissez le type de pièce.");
+    expect(targetHint("pair", 4, false)).toMatch(/seconde/);
+  });
+
+  it("keeps the turn after a skill that does not end it", () => {
+    // Mind Reading / Mind Control: `to_move` stays `you`, so the board is still clickable after the cast.
+    const v = view({
+      to_move: "white",
+      skill_options: [{ skill: "control", targets: [{ kind: "piece", square: 52 }] }],
+      moves: [{ from: 12, to: 20 }],
+    });
+    const cast = click(v, startSkill(v, "control"), 52);
+    expect(cast.interaction).toEqual(IDLE);
+    expect(click({ ...v, skill_options: [] }, cast.interaction, 12).interaction).toEqual({ kind: "idle", selected: 12 });
   });
 });

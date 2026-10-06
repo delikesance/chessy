@@ -44,6 +44,8 @@ export interface AppState {
   lobby: LobbyStatus;
   deckSelect: DeckSelectInfo | null;
   game: StateView | null;
+  /** Incrémenté à chaque `state` reçu : Mind Reading/Control laissent `ply` inchangé, donc `ply` seul ne suffit pas à détecter une nouvelle position. */
+  stateSeq: number;
   /** Set once the server reports the game as finished. */
   over: GameOver | null;
   /** A reward from a past game that was never claimed. */
@@ -67,6 +69,10 @@ export function normalizeState(view: StateView): StateView {
   return {
     ...view,
     clock_enabled: view.clock_enabled ?? true,
+    traps: view.traps ?? [],
+    benched: view.benched ?? [],
+    terrain: view.terrain ?? [],
+    effects: view.effects ?? [],
     opponent: { ...view.opponent, bot: view.opponent?.bot ?? false },
   };
 }
@@ -104,6 +110,7 @@ const initial: AppState = {
   lobby: { type: "idle" },
   deckSelect: null,
   game: null,
+  stateSeq: 0,
   over: null,
   pendingReward: null,
   friends: EMPTY_FRIENDS,
@@ -404,7 +411,7 @@ export class Store {
       case "state": {
         const { type: _type, ...view } = msg;
         this.clearSoloPending();
-        this.set({ game: normalizeState(view), deckSelect: null });
+        this.set({ game: normalizeState(view), deckSelect: null, stateSeq: this.state.stateSeq + 1 });
         break;
       }
       case "opponent_status":
