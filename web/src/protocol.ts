@@ -193,6 +193,8 @@ export interface StateView {
   outcome: Outcome;
   events: GameEvent[];
   opponent_connected: boolean;
+  /** Nombre de spectateurs courant (v4) ; absent = serveur ancien. */
+  spectators?: number;
 }
 
 export interface RewardOffer {
@@ -281,6 +283,8 @@ export interface FriendInfo {
   elo: number;
   presence: Presence;
   last_seen: string | null;
+  /** Partie en cours de l'ami (v4), pour le bouton « Regarder » ; absent = serveur ancien. */
+  game_id?: string | null;
 }
 
 export interface FriendsSnapshot {
@@ -335,6 +339,9 @@ export type ServerMsg =
   | { type: "game_over"; outcome: Outcome; reward: RewardOffer | null; rated: boolean; elo: EloChange | null; reason: string }
   | { type: "deck_update"; deck: SkillId[]; gained: SkillId | null; lost: SkillId | null }
   | { type: "game_cancelled"; reason: string }
+  | { type: "spectate_state"; view: SpectatorView }
+  | { type: "spectate_over"; view: SpectatorView }
+  | { type: "spectate_ended"; reason: string }
   | { type: "error"; code: string; message: string };
 
 export type RewardChoice =
@@ -365,4 +372,182 @@ export type ClientMsg =
   | { type: "respond_draw"; accept: boolean }
   | { type: "chat"; text: string }
   | { type: "rematch_request" }
-  | { type: "rematch_respond"; accept: boolean };
+  | { type: "rematch_respond"; accept: boolean }
+  | { type: "spectate"; game_id: string }
+  | { type: "unspectate" };
+
+// ---- parties enregistrées, replays, analyse, direct (voir docs/spec-v4.md §1-§3) ----
+
+export type GameKind = "duel" | "challenge" | "room" | "solo";
+
+/** Un joueur d'une partie : `elo` = Elo avant la partie, ou niveau du bot. */
+export interface Seat {
+  username: string | null;
+  elo: number | null;
+  bot: boolean;
+}
+
+export type GameResult = "win" | "loss" | "draw";
+
+/** Ligne de `GET /api/me/games` ; `color` est le camp du demandeur. */
+export interface GameSummary {
+  game_id: string;
+  kind: GameKind;
+  rated: boolean;
+  white: Seat;
+  black: Seat;
+  color: Color;
+  result: GameResult;
+  reason: string;
+  plies: number;
+  elo_delta: number | null;
+  at: string;
+}
+
+export interface MyGames {
+  total: number;
+  games: GameSummary[];
+}
+
+/** Une action de la partie : `ply` = numéro (1-based) de l'action, `notation` en français courant. */
+export interface MoveInfo {
+  ply: number;
+  color: Color;
+  action: Action;
+  notation: string;
+}
+
+export interface FrameTrap {
+  square: Square;
+  owner: Color;
+}
+
+export interface FrameBenched {
+  piece: Piece;
+  square: Square;
+  owner: Color;
+  back_at: number;
+}
+
+export interface UsedSkills {
+  white: SkillId[];
+  black: SkillId[];
+}
+
+/** Position après `ply` actions (0 = position initiale), avec toute l'information (partie finie). */
+export interface Frame {
+  ply: number;
+  to_move: Color;
+  in_check: boolean;
+  board: (Piece | null)[];
+  effects: ActiveEffect[];
+  traps: FrameTrap[];
+  terrain: Terrain[];
+  benched: FrameBenched[];
+  /** Ce qui s'est passé pour arriver à cette position. */
+  events: GameEvent[];
+  used: UsedSkills;
+  outcome: Outcome;
+}
+
+export interface GameRecord {
+  game_id: string;
+  kind: GameKind;
+  rated: boolean;
+  white: Seat;
+  black: Seat;
+  result: { outcome: Outcome; reason: string };
+  plies: number;
+  at: string;
+  loadouts: { white: SkillId[]; black: SkillId[] };
+  moves: MoveInfo[];
+  /** `frames.length == plies + 1`. */
+  frames: Frame[];
+}
+
+export type AnalysisLabel = "best" | "good" | "inaccuracy" | "mistake" | "blunder";
+
+/** Meilleur coup *simple* du camp au trait ; `eval_cp` du point de vue des blancs. */
+export interface BestMove {
+  action: Action;
+  notation: string;
+  eval_cp: number;
+}
+
+export interface PlyAnalysis {
+  ply: number;
+  /** Point de vue des blancs, borné à ±2000 (mat = ±2000). */
+  eval_cp: number;
+  best: BestMove | null;
+  loss_cp: number;
+  label: AnalysisLabel;
+}
+
+export type LabelCounts = Record<AnalysisLabel, number>;
+
+export interface Analysis {
+  depth: number;
+  plies: PlyAnalysis[];
+  accuracy: { white: number; black: number };
+  summary: { white: LabelCounts; black: LabelCounts };
+}
+
+export interface ExploreRequest {
+  ply: number;
+  line: Action[];
+  depth?: number;
+}
+
+export interface ExploreResponse {
+  valid: boolean;
+  error?: "illegal_action" | "bad_ply";
+  /** Nombre d'actions de `line` appliquées avec succès. */
+  at: number;
+  frame: Frame | null;
+  moves: Move[];
+  skill_options: SkillOptions[];
+  eval_cp: number;
+  best: BestMove | null;
+  /** Notation de chaque action de `line`. */
+  notation: string[];
+}
+
+/** Partie en cours (`GET /api/live`). */
+export interface LiveGame {
+  game_id: string;
+  kind: GameKind;
+  rated: boolean;
+  white: Seat;
+  black: Seat;
+  ply: number;
+  started_at: string;
+  spectators: number;
+}
+
+export interface LiveGames {
+  games: LiveGame[];
+}
+
+/** Vue d'une partie pour un spectateur : pas d'information cachée (pièges, banc, pièces invisibles). */
+export interface SpectatorView {
+  game_id: string;
+  kind: GameKind;
+  rated: boolean;
+  white: Seat;
+  black: Seat;
+  ply: number;
+  to_move: Color;
+  in_check: boolean;
+  board: (Piece | null)[];
+  effects: ActiveEffect[];
+  terrain: Terrain[];
+  /** `running` : camp dont l'horloge tourne (ou un booléen selon la version du serveur). */
+  clock: { white_ms: number; black_ms: number; running: Color | boolean | null };
+  clock_enabled: boolean;
+  events: GameEvent[];
+  used: UsedSkills;
+  outcome: Outcome;
+  spectators: number;
+  /** Retransmission différée (30 000 ms entre humains, 0 en solo). */
+  delay_ms: number;
+}
