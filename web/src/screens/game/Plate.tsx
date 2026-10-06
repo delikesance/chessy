@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { capturedPieces, evalShare, formatClock, materialBalance, remainingMs } from "../../game/logic";
+import { capturedPieces, evalShare, formatClock, materialBalance, materialOf, remainingMs } from "../../game/logic";
 import type { Clock as ClockState, Color, Piece, SkillId, StateView } from "../../protocol";
 import { skillInfo } from "../../skills";
 import { PieceIcon, SkillArt } from "../../ui/SkillArt";
@@ -31,6 +31,10 @@ interface PlateProps {
   elo: number | null;
   color: Color;
   board: (Piece | null)[];
+  /** Pièces du camp adverse à `color` actuellement sur son banc (elles ne sont pas des captures). */
+  rivalBench?: Piece[];
+  /** Son propre banc (nous seulement : celui de l'adversaire est caché). */
+  ownBench?: Piece[];
   clock: ClockState;
   stamp: number;
   active: boolean;
@@ -47,10 +51,10 @@ interface PlateProps {
   clockLabel: string;
 }
 
-export function Plate({ name, elo, color, board, clock, stamp, active, used, remaining, disconnected, you, bot, clockEnabled = true, clockLabel }: PlateProps) {
+export function Plate({ name, elo, color, board, ownBench, rivalBench, clock, stamp, active, used, remaining, disconnected, you, bot, clockEnabled = true, clockLabel }: PlateProps) {
   // Les pièces que ce joueur a prises sont les pièces manquantes de l'autre camp.
-  const taken = capturedPieces(board, color === "white" ? "black" : "white");
-  const lead = materialBalance(board, color);
+  const taken = capturedPieces(board, color === "white" ? "black" : "white", rivalBench);
+  const lead = materialOf(board, color, ownBench) - materialOf(board, color === "white" ? "black" : "white", rivalBench);
   return (
     <div className={`gm-plate card${active ? " turn" : ""}`}>
       <span className={`avatar${you ? " solid" : ""}`}>{initialOf(name)}</span>
@@ -95,7 +99,7 @@ export function Plate({ name, elo, color, board, clock, stamp, active, used, rem
 
 /** Barre d'évaluation matérielle, du point de vue du joueur (sa part en bas). */
 export function EvalBar({ view }: { view: StateView }) {
-  const balance = materialBalance(view.board, view.you);
+  const balance = materialBalance(view.board, view.you, view.benched);
   const share = evalShare(balance);
   const text = balance === 0 ? "égalité matérielle" : balance > 0 ? `avantage de ${balance} pour vous` : `avantage de ${-balance} pour l'adversaire`;
   return (

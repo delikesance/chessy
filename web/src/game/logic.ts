@@ -1,7 +1,7 @@
 // Logique pure de l'écran de jeu (horloges, matériel, journal), sans React ni Phaser.
 
 import { skillName } from "../skills";
-import type { Clock, Color, GameEvent, Piece, PieceKind, Square, StateView } from "../protocol";
+import type { Clock, Color, EffectKind, GameEvent, Piece, PieceKind, Square, StateView } from "../protocol";
 
 // ---- horloges -----------------------------------------------------------------
 
@@ -31,13 +31,17 @@ const START_COUNT: Record<PieceKind, number> = { pawn: 8, knight: 2, bishop: 2, 
 
 export const CAPTURE_ORDER: PieceKind[] = ["queen", "rook", "bishop", "knight", "pawn"];
 
-export function materialOf(board: (Piece | null)[], color: Color): number {
-  return board.reduce((sum, p) => (p && p.color === color ? sum + PIECE_VALUE[p.kind] : sum), 0);
+/** Pièces comptées dans le matériel : ni mirages ni copies temporaires. */
+const counts = (p: Piece | null): p is Piece => !!p && !p.mirage && !p.temp;
+
+/** `benched` : pièces de `color` mises de côté (Bench), qui comptent encore comme matériel. */
+export function materialOf(board: (Piece | null)[], color: Color, benched: Piece[] = []): number {
+  return [...board, ...benched].reduce((sum, p) => (counts(p) && p.color === color ? sum + PIECE_VALUE[p.kind] : sum), 0);
 }
 
-/** Avantage matériel de `color` (positif = en avance). */
-export function materialBalance(board: (Piece | null)[], color: Color): number {
-  return materialOf(board, color) - materialOf(board, color === "white" ? "black" : "white");
+/** Avantage matériel de `color` (positif = en avance). `benched` : le banc de `color`. */
+export function materialBalance(board: (Piece | null)[], color: Color, benched: Piece[] = []): number {
+  return materialOf(board, color, benched) - materialOf(board, color === "white" ? "black" : "white");
 }
 
 /** Part (0..1) de la barre d'évaluation occupée par `color` : sigmoïde douce autour de 0,5. */
@@ -49,9 +53,9 @@ export function evalShare(balance: number): number {
  * Pièces de `color` absentes de l'échiquier, de la plus forte à la plus faible.
  * Les pièces gagnées par promotion compensent les pions manquants.
  */
-export function capturedPieces(board: (Piece | null)[], color: Color): PieceKind[] {
+export function capturedPieces(board: (Piece | null)[], color: Color, benched: Piece[] = []): PieceKind[] {
   const count: Record<PieceKind, number> = { pawn: 0, knight: 0, bishop: 0, rook: 0, queen: 0, king: 0 };
-  for (const p of board) if (p && p.color === color) count[p.kind]++;
+  for (const p of [...board, ...benched]) if (counts(p) && p.color === color) count[p.kind]++;
   const lost = {} as Record<PieceKind, number>;
   let promoted = 0;
   for (const kind of CAPTURE_ORDER) {
@@ -84,6 +88,8 @@ export interface LogLine {
   kind: "move" | "skill";
   text: string;
   skill?: string;
+  /** Identifiant de l'action (voir `actionKey`) : Mind Reading/Control laissent le `ply` inchangé. */
+  key?: string;
 }
 
 /** Qui a joué : l'auteur de `skill_used` si présent, sinon l'inverse du trait actuel. */
@@ -99,8 +105,16 @@ export function describeAction(view: StateView): LogLine | null {
   const actor = actorOf(view);
   const skillEvent = events.find((e): e is Extract<GameEvent, { type: "skill_used" }> => e.type === "skill_used");
   const parts: string[] = [];
-  for (const e of events) parts.push(...describeEvent(e, board, skillEvent !== undefined));
-  const text = parts.filter(Boolean).join(" · ");
+  const spawns = events.filter((e) => e.type === "spawned").length;
+  for (const e of events) {
+    // Wall fait surgir plusieurs pions d'un coup : une seule mention.
+    if (e.type === "spawned" && spawns > 1) {
+      if (!parts.some((p) => p.startsWith(`${spawns} pièces`))) parts.push(`${spawns} pièces apparaissent`);
+      continue;
+    }
+    parts.push(...describeEvent(e, board, skillEvent !== undefined));
+  }
+  const text = [...new Set(parts.filter(Boolean))].join(" · ");
   if (!text && !skillEvent) return null;
   return {
     ply: view.ply,
@@ -134,10 +148,74 @@ function describeEvent(e: GameEvent, board: (Piece | null)[], inSkill: boolean):
     case "rolled_back":
       return [`retour ${sqName(e.from)} vers ${sqName(e.to)}`];
     case "effect_added":
-      return [e.effect === "frozen" ? "pièce gelée" : "pièce protégée"];
+      return [EFFECT_FR[e.effect] ?? "effet appliqué"];
     case "skill_used":
       return inSkill ? [] : [skillName(e.skill)];
+    case "spawned":
+      return [`${pieceLabel(e.piece)} apparaît en ${sqName(e.square)}`];
+    case "transformed":
+      return [`${sqName(e.square)} devient ${PIECE_FR[e.kind].toLowerCase()}`];
+    case "switched":
+      return [`${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)} change de camp`];
+    case "rotated":
+      return [`${e.moves.length} pièces tournent`];
+    case "trap_set":
+      return [`piège posé en ${sqName(e.square)}`];
+    case "trap_sprung":
+      return [`piège déclenché en ${sqName(e.square)}`];
+    case "benched":
+      return [`${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)} mis sur le banc`];
+    case "unbenched":
+      return [`${PIECE_FR[e.piece.kind].toLowerCase()} revient en ${sqName(e.square)}`];
+    case "pushed":
+      return [`attaquant repoussé ${sqName(e.from)}–${sqName(e.to)}`];
+    case "saved":
+      return [`pièce sauvée, retour en ${sqName(e.to)}`];
+    case "best_move":
+      return [`meilleur coup ${sqName(e.from)}–${sqName(e.to)}${e.promo ? ` (${PIECE_FR[e.promo].toLowerCase()})` : ""}`];
+    case "cancelled":
+      return [`${skillName(e.skill)} annulée`];
+    case "terrain":
+      return [`${e.squares.length} cases de roc`];
+    case "vanished":
+      return [`${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)} disparaît`];
+    case "loan_ended":
+      return [`${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)} restituée`];
+    default:
+      return [];
   }
+}
+
+const EFFECT_FR: Record<EffectKind, string> = {
+  immune: "pièce protégée",
+  frozen: "pièce gelée",
+  invisible: "pièce invisible",
+  forcefield: "champ de force",
+  celestial: "protection céleste",
+  locked: "pion immobilisé",
+  morphed: "pièce métamorphosée",
+  color_loan: "pièce sous contrôle",
+  vanish: "pièce éphémère",
+};
+
+function pieceLabel(p: Piece): string {
+  const base = PIECE_FR[p.kind];
+  return p.mirage ? `${base} mirage` : p.wall ? `${base} mur` : p.temp ? `${base} temporaire` : base;
+}
+
+/**
+ * Empreinte de la dernière action : change à chaque coup ou compétence, y compris Mind Reading
+ * et Mind Control qui laissent le `ply` inchangé, mais pas quand le serveur renvoie la même position
+ * (reprise après reconnexion).
+ */
+export function actionKey(view: Pick<StateView, "ply" | "events" | "my_skills">): string {
+  const uses = view.my_skills.reduce((n, s) => n + (s.uses ?? (s.used ? 1 : 0)), 0);
+  return `${view.ply}|${uses}|${JSON.stringify(view.events)}`;
+}
+
+/** Durée restante d'un effet ou d'un terrain, en tours complets (un tour = 2 demi-coups). */
+export function turnsLeft(expiresAt: number, ply: number): number {
+  return Math.max(0, Math.ceil((expiresAt - ply) / 2));
 }
 
 /** Compétence lancée lors de la dernière action, s'il y en a une. */
@@ -146,8 +224,10 @@ export function launchOf(view: Pick<StateView, "events">): { color: Color; skill
   return null;
 }
 
-/** Ajoute `line` au journal sans doublon de demi-coup. */
+/** Ajoute `line` au journal sans doublon (par `key` si présente, sinon par demi-coup). */
 export function appendLog(log: LogLine[], line: LogLine | null, max = 200): LogLine[] {
-  if (!line || log.some((l) => l.ply === line.ply)) return log;
+  if (!line) return log;
+  const same = (l: LogLine) => (line.key !== undefined ? l.key === line.key : l.key === undefined && l.ply === line.ply);
+  if (log.some(same)) return log;
   return [...log, line].slice(-max);
 }

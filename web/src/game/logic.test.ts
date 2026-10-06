@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionKey,
   appendLog,
   capturedPieces,
   describeAction,
@@ -9,8 +10,9 @@ import {
   materialBalance,
   remainingMs,
   sqName,
+  turnsLeft,
 } from "./logic";
-import type { Piece, PieceKind, StateView } from "../protocol";
+import type { GameEvent, Piece, PieceKind, StateView } from "../protocol";
 
 let nextId = 0;
 const p = (kind: PieceKind, color: "white" | "black"): Piece => ({ id: nextId++, kind, color });
@@ -142,5 +144,69 @@ describe("journal", () => {
     const line = { ply: 3, actor: "white" as const, kind: "move" as const, text: "x" };
     expect(appendLog([line], line)).toHaveLength(1);
     expect(appendLog([line], null)).toHaveLength(1);
+  });
+});
+
+describe("v3 journal and bookkeeping", () => {
+  const cast = (skill: "wall" | "tornado" | "trap" | "mind", ...rest: GameEvent[]) =>
+    view({ to_move: "black", events: [{ type: "skill_used", color: "white", skill, target: { kind: "none" } }, ...rest] });
+
+  it("describes the new events in French", () => {
+    expect(describeAction(cast("tornado", { type: "rotated", moves: [{ from: 1, to: 2 }, { from: 2, to: 1 }] }))?.text).toBe("Tornado · 2 pièces tournent");
+    expect(describeAction(cast("trap", { type: "trap_set", square: 20 }))?.text).toBe("Trap Card · piège posé en e3");
+    expect(describeAction(cast("mind", { type: "best_move", from: 12, to: 28 }))?.text).toBe("Mind Reading · meilleur coup e2–e4");
+    expect(describeAction(view({ events: [{ type: "trap_sprung", square: 20, piece: 3 }] }))?.text).toBe("piège déclenché en e3");
+    expect(describeAction(view({ events: [{ type: "saved", piece: 3, from: 20, to: 8 }] }))?.text).toBe("pièce sauvée, retour en a2");
+  });
+
+  it("groups the pawns of a Wall into one mention", () => {
+    const pawn = (id: number, home: number) => ({ id, kind: "pawn" as const, color: "white" as const, home, wall: true });
+    const line = describeAction(
+      cast(
+        "wall",
+        { type: "spawned", square: 20, piece: pawn(1, 12) },
+        { type: "spawned", square: 21, piece: pawn(2, 13) },
+        { type: "effect_added", piece: 1, effect: "locked", expires_at: 5 },
+        { type: "effect_added", piece: 2, effect: "locked", expires_at: 5 },
+      ),
+    );
+    expect(line?.text).toBe("Wall · 2 pièces apparaissent · pion immobilisé");
+  });
+
+  it("keys actions so that Mind Reading and Mind Control, which keep the ply, are distinct", () => {
+    const base = { ply: 4, my_skills: [{ skill: "mind" as const, used: false, uses: 0, max_uses: 3 }] };
+    const first = actionKey({ ...base, events: [] });
+    const afterMind = actionKey({ ...base, my_skills: [{ skill: "mind", used: false, uses: 1, max_uses: 3 }], events: [{ type: "best_move", from: 1, to: 2 }] });
+    expect(afterMind).not.toBe(first);
+    // Même position renvoyée (reconnexion) : même empreinte.
+    expect(actionKey({ ...base, events: [] })).toBe(first);
+    // Mind Reading deux fois de suite dans la même position : le compteur d'usages les distingue.
+    const second = actionKey({ ...base, my_skills: [{ skill: "mind", used: false, uses: 2, max_uses: 3 }], events: [{ type: "best_move", from: 1, to: 2 }] });
+    expect(second).not.toBe(afterMind);
+  });
+
+  it("logs several actions that share a ply", () => {
+    const a = { ply: 4, actor: "white" as const, kind: "skill" as const, text: "a", key: "k1" };
+    const b = { ...a, text: "b", key: "k2" };
+    expect(appendLog(appendLog([], a), b)).toHaveLength(2);
+    expect(appendLog([a], a)).toHaveLength(1);
+  });
+
+  it("counts remaining turns of an effect or terrain", () => {
+    expect(turnsLeft(9, 7)).toBe(1);
+    expect(turnsLeft(9, 4)).toBe(3);
+    expect(turnsLeft(9, 12)).toBe(0);
+  });
+
+  it("keeps mirages and temporary copies out of the material count, and benched pieces in", () => {
+    const b = boardWith(
+      { id: 1, kind: "king", color: "white" },
+      { id: 2, kind: "queen", color: "white", mirage: true },
+      { id: 3, kind: "rook", color: "white", temp: true },
+    );
+    expect(materialBalance(b, "white")).toBe(0);
+    const benched = [{ id: 4, kind: "rook" as const, color: "white" as const }];
+    expect(materialBalance(b, "white", benched)).toBe(5);
+    expect(capturedPieces(boardWith(...fullSide("white").slice(0, 15)), "white", benched)).not.toContain("rook");
   });
 });

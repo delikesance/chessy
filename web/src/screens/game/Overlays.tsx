@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { FAMILY_LABEL } from "../../catalog";
 import { formatDelta, resultFor, resultHeadline } from "../../outcome";
-import type { Color, EloChange, Outcome, PieceKind } from "../../protocol";
+import type { Color, EloChange, Outcome, PieceKind, SpawnKind } from "../../protocol";
 import { skillInfo } from "../../skills";
 import { store } from "../../store";
 import { PieceIcon, SkillArt } from "../../ui/SkillArt";
@@ -22,6 +22,46 @@ export function PromotionPicker({ options, onPick, onCancel }: { options: PieceK
             <button key={kind} type="button" className="btn gm-promo-btn" ref={i === 0 ? first : undefined} onClick={() => onPick(kind)}>
               <PieceIcon kind={kind} size={34} />
               <span>{PROMO_LABEL[kind] ?? kind}</span>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="btn sm ghost" onClick={onCancel}>
+          Annuler
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const SPAWN_LABEL: Record<string, string> = { pawn: "Pion", knight: "Cavalier", bishop: "Fou", rook: "Tour", queen: "Dame" };
+
+/** Mirage / Morph : choix du type de pièce une fois la case choisie (comme la promotion). */
+export function SpawnPicker({
+  skill,
+  options,
+  onPick,
+  onCancel,
+}: {
+  skill: string;
+  options: SpawnKind[];
+  onPick: (k: SpawnKind) => void;
+  onCancel: () => void;
+}) {
+  const first = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    first.current?.focus();
+  }, []);
+  const info = skillInfo(skill);
+  return (
+    <div className="gm-veil" role="dialog" aria-modal="true" aria-label={`${info.name} : type de pièce`}>
+      <div className="gm-promo card" style={{ "--fam": `var(--fam-${info.family})` } as CSSProperties}>
+        <p className="eyebrow">{info.name}</p>
+        <p className="gm-promo-ask">Choisissez le type de pièce</p>
+        <div className="gm-promo-row">
+          {options.map((kind, i) => (
+            <button key={kind} type="button" className="btn gm-promo-btn" ref={i === 0 ? first : undefined} onClick={() => onPick(kind)}>
+              <PieceIcon kind={kind} size={34} />
+              <span>{SPAWN_LABEL[kind] ?? kind}</span>
             </button>
           ))}
         </div>

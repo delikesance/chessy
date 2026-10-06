@@ -234,3 +234,107 @@ export function drawPiece(canvas: HTMLCanvasElement, kind: PieceKind, color: Col
     ctx.fill(new Path2D(circle(56, 31, 2.4)));
   }
 }
+
+/** Pièce de pierre (pions-murs de Wall) : la silhouette de la pièce, recouverte de roche fissurée. */
+export function stoneKey(color: Color, kind: PieceKind): string {
+  return `piece-stone-${color}-${kind}`;
+}
+
+export function drawStonePiece(canvas: HTMLCanvasElement, kind: PieceKind, color: Color) {
+  drawPiece(canvas, kind, color);
+  const ctx = canvas.getContext("2d")!;
+  const rnd = mulberry32(color === "white" ? 7 : 11);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = "source-atop";
+  const g = ctx.createLinearGradient(20, 0, 110, 0);
+  g.addColorStop(0, color === "white" ? "rgba(190,196,206,0.9)" : "rgba(120,126,138,0.9)");
+  g.addColorStop(1, color === "white" ? "rgba(108,114,126,0.92)" : "rgba(52,56,66,0.92)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, PIECE_TEX, PIECE_TEX);
+  for (let i = 0; i < 420; i++) {
+    ctx.fillStyle = rnd() < 0.5 ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.22)";
+    ctx.fillRect(rnd() * PIECE_TEX, rnd() * PIECE_TEX, rnd() < 0.2 ? 3 : 1.5, rnd() < 0.2 ? 3 : 1.5);
+  }
+  ctx.strokeStyle = "rgba(10,12,16,0.7)";
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 4; i++) {
+    let x = 36 + rnd() * 56;
+    let y = 26 + rnd() * 60;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let s = 0; s < 4; s++) {
+      x += (rnd() - 0.5) * 16;
+      y += 5 + rnd() * 8;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Pilier de roc du terrain de Geomancy : un bloc taillé à facettes qui déborde au-dessus de la case. */
+export const ROCK_KEY = "terrain-rock";
+export const ROCK_W = TILE;
+export const ROCK_H = TILE + 30;
+
+export function drawRock(canvas: HTMLCanvasElement) {
+  canvas.width = ROCK_W;
+  canvas.height = ROCK_H;
+  const ctx = canvas.getContext("2d")!;
+  const rnd = mulberry32(2024);
+  const top = 6;
+  const base = ROCK_H - 4;
+  const pts: [number, number][] = [
+    [6, base], [4, base - 28], [12, base - 52], [10, top + 34], [24, top + 10], [34, top], [48, top + 6], [58, top + 4],
+    [68, top + 20], [72, top + 44], [74, base - 22], [72, base],
+  ];
+  // Ombre au sol.
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.beginPath();
+  ctx.ellipse(ROCK_W / 2, base + 1, 34, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Corps du pilier.
+  const body = ctx.createLinearGradient(8, 0, 74, 0);
+  body.addColorStop(0, "#9aa1ac");
+  body.addColorStop(0.5, "#6e7580");
+  body.addColorStop(1, "#3f444e");
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.closePath();
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  // Facettes : plans clairs et sombres.
+  for (let i = 0; i < 9; i++) {
+    const x = 6 + rnd() * 66;
+    const y = top + rnd() * (base - top);
+    ctx.fillStyle = rnd() < 0.5 ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.16)";
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 14 + rnd() * 18, y + (rnd() - 0.5) * 20);
+    ctx.lineTo(x + (rnd() - 0.5) * 16, y + 22 + rnd() * 24);
+    ctx.closePath();
+    ctx.fill();
+  }
+  for (let i = 0; i < 320; i++) {
+    ctx.fillStyle = rnd() < 0.5 ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.12)";
+    ctx.fillRect(rnd() * ROCK_W, rnd() * ROCK_H, 1.5, 1.5);
+  }
+  ctx.restore();
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#1b1e23";
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.closePath();
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(24, top + 12);
+  ctx.lineTo(34, top + 2);
+  ctx.lineTo(48, top + 8);
+  ctx.stroke();
+}
