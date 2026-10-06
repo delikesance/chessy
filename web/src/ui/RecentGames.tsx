@@ -32,7 +32,7 @@ export function RecentGames({ games, limit }: Props) {
             </span>
           </span>
           <span className="rg-side">
-            <span className="rg-delta mono" aria-label={g.rated ? `Variation d'Elo ${formatDelta(g.elo_delta)}` : undefined}>
+            <span className={`rg-delta mono ${g.elo_delta !== null && g.elo_delta > 0 ? "up" : g.elo_delta !== null && g.elo_delta < 0 ? "down" : ""}`} aria-label={g.rated ? `Variation d'Elo ${formatDelta(g.elo_delta)}` : undefined}>
               {g.rated ? formatDelta(g.elo_delta) : "—"}
             </span>
             <span className="tag">{g.rated ? "Classée" : "Amicale"}</span>

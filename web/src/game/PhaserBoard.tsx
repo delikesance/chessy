@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { useEffect, useRef } from "react";
 import type { Highlights } from "../interaction";
 import type { Square, StateView } from "../protocol";
+import { getTheme, useTheme } from "../theme";
 import { BOARD_SIZE, BoardScene } from "./BoardScene";
 
 interface Props {
@@ -10,14 +11,22 @@ interface Props {
   onSquare: (square: Square) => void;
   /** Faux : plateau en lecture seule (replay, spectateur) ; les clics ne sont pas transmis. */
   interactive?: boolean;
+  /** Glisser-déposer (optionnel ; voir `dragStart`/`dropOn` dans interaction.ts). */
+  canDrag?: (square: Square) => boolean;
+  onDragStart?: (square: Square) => void;
+  onDrop?: (from: Square, to: Square | null) => "snap" | "return";
+  /** Premove en attente, dessiné sur le plateau. */
+  premove?: { from: Square; to: Square; failed?: boolean } | null;
+  onCancelPremove?: () => void;
 }
 
-export function PhaserBoard({ view, highlights, onSquare, interactive = true }: Props) {
+export function PhaserBoard({ view, highlights, onSquare, interactive = true, canDrag, onDragStart, onDrop, premove = null, onCancelPremove }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const scene = useRef<BoardScene | null>(null);
   // Latest props, readable from the deferred game setup and from scene callbacks.
-  const latest = useRef({ view, highlights, onSquare, interactive });
-  latest.current = { view, highlights, onSquare, interactive };
+  const latest = useRef({ view, highlights, onSquare, interactive, canDrag, onDragStart, onDrop, premove, onCancelPremove });
+  latest.current = { view, highlights, onSquare, interactive, canDrag, onDragStart, onDrop, premove, onCancelPremove };
+  const theme = useTheme();
 
   useEffect(() => {
     let game: Phaser.Game | null = null;
@@ -30,6 +39,12 @@ export function PhaserBoard({ view, highlights, onSquare, interactive = true }: 
       boardScene.onSquare = (square) => {
         if (latest.current.interactive) latest.current.onSquare(square);
       };
+      boardScene.canDrag = (square) => !!latest.current.interactive && !!latest.current.canDrag?.(square);
+      boardScene.onDragStart = (square) => latest.current.onDragStart?.(square);
+      boardScene.onDrop = (from, to) => (latest.current.interactive ? latest.current.onDrop?.(from, to) ?? "return" : "return");
+      boardScene.onCancelPremove = () => latest.current.onCancelPremove?.();
+      boardScene.setTheme(getTheme());
+      boardScene.setPremove(latest.current.premove);
       boardScene.setView(latest.current.view);
       boardScene.setHighlights(latest.current.highlights);
       scene.current = boardScene;
@@ -62,6 +77,12 @@ export function PhaserBoard({ view, highlights, onSquare, interactive = true }: 
   useEffect(() => {
     scene.current?.setHighlights(highlights);
   }, [highlights]);
+  useEffect(() => {
+    scene.current?.setTheme(theme);
+  }, [theme]);
+  useEffect(() => {
+    scene.current?.setPremove(premove);
+  }, [premove]);
 
   return <div className="gm-board-host" ref={host} role="img" aria-label="Échiquier" />;
 }

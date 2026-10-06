@@ -1,0 +1,72 @@
+/*
+ * Davantage de couleur (docs/spec-v4.md §4) : l'accent du thème teinte l'onglet actif, les liserés, le camp au trait,
+ * les survols ; gain/perte d'Elo lisibles ; cartes de compétence teintées par leur famille.
+ * Ces règles sont préfixées par `:root` pour l'emporter sur les feuilles des écrans, chargées plus tard.
+ * Tous les textes colorés restent à plus de 4,5:1 sur les fonds sombres.
+ */
+
+/* Navigation */
+:root .nav { border-bottom-color: color-mix(in srgb, var(--accent) 24%, var(--line)); }
+:root .nav-tab:hover { color: color-mix(in srgb, var(--accent) 55%, var(--text)); }
+:root .nav-tab[aria-current="page"] {
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-3));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+:root .nav-count { background: var(--accent); color: #0e0f12; }
+:root .nav-gear { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: var(--muted); }
+:root .nav-gear:hover { color: var(--accent); background: var(--surface); }
+
+/* Contrôles */
+:root .seg > button[aria-selected="true"], :root .seg > button.on {
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-3));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+:root .btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 55%, var(--line-3)); }
+:root .btn.pri:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, #fff); }
+:root .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+:root .tag.on, :root .tag.accent { border-color: var(--accent); color: var(--accent); }
+
+/* Partie : camp au trait, indices, horloge, journal */
+:root .gm-plate.turn { border-color: color-mix(in srgb, var(--accent) 55%, var(--line-3)); }
+:root .gm-plate.turn::before { background: var(--accent); }
+:root .gm-turn-tag { border-color: var(--accent); color: var(--accent); }
+:root .gm-clock.on { background: var(--accent); border-color: var(--accent); color: #0e0f12; }
+:root .gm-clock.on.low { background: var(--danger); border-color: var(--danger); color: #1a0d0b; }
+:root .gm-hint { border-left: 3px solid color-mix(in srgb, var(--accent) 70%, var(--line)); }
+:root .gm-hint.warn { border-left-color: var(--warn); }
+:root .gm-hint.check { border-left-color: var(--danger); }
+:root .gm-log li.me .gm-log-who { color: var(--accent); }
+:root .gm-msg.me { background: color-mix(in srgb, var(--accent) 80%, #fff); color: #0e0f12; }
+:root .gm-skill.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+:root .gm-skill { background: color-mix(in srgb, var(--fam) 9%, var(--surface-2)); }
+:root .gm-skill:hover:not(:disabled) { background: color-mix(in srgb, var(--fam) 16%, var(--surface-3)); }
+:root .gm-skill .gm-skill-art { border-color: color-mix(in srgb, var(--fam) 35%, var(--line)); }
+:root .gm-premove-x { border-color: color-mix(in srgb, var(--premove) 60%, var(--line-2)); color: var(--premove); }
+
+/* Elo : gain en vert de la défense, perte en rouge, victoire/défaite colorées */
+:root .rg-result.win, :root .rg-delta.up { color: var(--fam-defense); }
+:root .rg-result.loss, :root .rg-delta.down { color: var(--danger); }
+:root .gm-result.win .gm-elo-delta { color: var(--fam-defense); }
+:root .gm-result.loss .gm-elo-delta { color: var(--danger); }
+:root .gm-result.win { border-top: 3px solid var(--fam-defense); }
+:root .gm-result.loss { border-top: 3px solid var(--danger); }
+:root .gm-result.draw { border-top: 3px solid var(--accent); }
+
+/* Cartes de compétence : teinte plus nette de la famille */
+:root .skc { background: color-mix(in srgb, var(--fam) 8%, var(--surface)); border-color: color-mix(in srgb, var(--fam) 30%, var(--line-2)); }
+:root button.skc:hover:not(:disabled) { background: color-mix(in srgb, var(--fam) 15%, var(--surface-2)); }
+:root .skc.on { background: color-mix(in srgb, var(--fam) 18%, var(--surface-2)); border-color: var(--fam); box-shadow: 0 0 0 1px var(--fam) inset; }
+:root .skc .skc-art { border-color: color-mix(in srgb, var(--fam) 35%, var(--line)); background: color-mix(in srgb, var(--fam) 10%, var(--sunken)); }
+:root .slot { background: color-mix(in srgb, var(--fam) 9%, var(--surface-2)); }
+:root .slot .slot-art { border-color: color-mix(in srgb, var(--fam) 35%, var(--line)); }
+:root .co-card:hover { background: color-mix(in srgb, var(--fam) 10%, var(--surface-2)); }
+:root .co-card.on { border-color: var(--fam); }
+
+/* Animations réduites (réglage de l'application, en plus de prefers-reduced-motion) */
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after {
+  animation-duration: 0.001ms !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}

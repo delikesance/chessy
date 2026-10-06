@@ -29,7 +29,7 @@ export function initialOf(name: string | null | undefined): string {
 export function NavBar({ state, route }: { state: AppState; route: Route["name"] }) {
   const { account, friends } = state;
   const pending = friends.incoming.length;
-  const activeTab = route === "profile" || route === "auth" ? null : route;
+  const activeTab = route === "profile" || route === "auth" || route === "settings" ? null : route;
 
   return (
     <header className="nav">
@@ -59,6 +59,12 @@ export function NavBar({ state, route }: { state: AppState; route: Route["name"]
           ) : (
             account && (
               <>
+                <a className="nav-gear" href={hrefFor({ name: "settings" })} aria-label="Réglages" title="Réglages">
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3.2" />
+                    <path d="M12 2.8v2.6M12 18.6v2.6M4.2 7.4l2.2 1.3M17.6 15.3l2.2 1.3M4.2 16.6l2.2-1.3M17.6 8.7l2.2-1.3" />
+                  </svg>
+                </a>
                 <span className="nav-guest muted">Invité</span>
                 <button type="button" className="btn sm" onClick={() => navigate({ name: "auth" })}>
                   Se connecter
@@ -116,6 +122,9 @@ function UserMenu({ username, elo }: { username: string; elo: number }) {
             onClick={() => setOpen(false)}
           >
             Profil
+          </a>
+          <a role="menuitem" href={hrefFor({ name: "settings" })} onClick={() => setOpen(false)}>
+            Réglages
           </a>
           <button
             type="button"

@@ -1,8 +1,9 @@
 import Phaser from "phaser";
-import type { Highlights } from "../interaction";
+import { exceedsDragThreshold, type Highlights } from "../interaction";
 import type { ActiveEffect, Color, EffectKind, GameEvent, Piece, PieceKind, SkillId, SkillTarget, Square, StateView, Terrain } from "../protocol";
-import { FX, drawArrow, drawEffectMark, drawDashedRing, drawHalo, drawHexRing, drawRune, drawShield, drawStrings, effectColor } from "./fx";
+import { FX, drawArrow, drawDashedArrow, drawEffectMark, drawDashedRing, drawHalo, drawHexRing, drawRune, drawShield, drawStrings, effectColor } from "./fx";
 import { actionKey, turnsLeft } from "./logic";
+import { accentColor, boardTheme, getTheme, hexToNum, pieceSet, premoveColor, type ThemeSettings } from "../theme";
 import {
   BOARD_PX,
   FRAME,
@@ -26,7 +27,9 @@ const PIECE_SCALE = 76 / PIECE_TEX;
 const KINDS: PieceKind[] = ["pawn", "knight", "bishop", "rook", "queen", "king"];
 const MONO = '"Geist Mono Variable", "Geist Mono", ui-monospace, monospace';
 
-const ACCENT = 0x8fb4ff;
+// Couleurs du thème courant (voir `BoardScene.setTheme`) ; valeurs par défaut = accent bleu.
+let ACCENT = 0x8fb4ff;
+let PREMOVE = hexToNum(premoveColor("blue"));
 const TEXT = 0xe9ebef;
 const DANGER = 0xee8272;
 
@@ -166,18 +169,33 @@ export class BoardScene extends Phaser.Scene {
   /** Meilleur coup de Mind Reading, affiché jusqu'au prochain coup. */
   private best: { ply: number; from: Square; to: Square } | null = null;
 
+  // ---- thème, glisser-déposer, premove (voir docs/spec-v4.md §4) ----
+  /** Cette case peut-elle être glissée ? Renseigné par `PhaserBoard`. */
+  canDrag: (square: Square) => boolean = () => false;
+  /** Début d'un glisser : le propriétaire « prend la pièce en main » (cases légales). */
+  onDragStart: (square: Square) => void = () => {};
+  /** Relâchement : `to` est null hors du plateau. Renvoie `snap` (la pièce se pose) ou `return` (elle revient). */
+  onDrop: (from: Square, to: Square | null) => "snap" | "return" = () => "return";
+  /** Clic droit ou appui long : annule le premove. */
+  onCancelPremove: () => void = () => {};
+
+  private theme: ThemeSettings = getTheme();
+  private boardKeys = new Set<string>();
+  private premove: { from: Square; to: Square; failed?: boolean } | null = null;
+  private premoveLayer!: Phaser.GameObjects.Graphics;
+  private dragShadow!: Phaser.GameObjects.Graphics;
+  private press: { square: Square; x: number; y: number; id: number | null } | null = null;
+  private drag: { id: number; from: Square; sprite: Sprite; hover: Square | null } | null = null;
+  private pressTimer: Phaser.Time.TimerEvent | null = null;
+  private longPressed = false;
+
   constructor() {
     super("board");
   }
 
   create() {
+    this.ensurePieceTextures(this.theme.pieces);
     for (const color of ["white", "black"] as Color[]) {
-      for (const kind of KINDS) {
-        const tex = this.textures.createCanvas(pieceKey(color, kind), PIECE_TEX, PIECE_TEX);
-        if (!tex) continue;
-        drawPiece(tex.getSourceImage() as HTMLCanvasElement, kind, color);
-        tex.refresh();
-      }
       const stone = this.textures.createCanvas(stoneKey(color, "pawn"), PIECE_TEX, PIECE_TEX);
       if (stone) {
         drawStonePiece(stone.getSourceImage() as HTMLCanvasElement, "pawn", color);
@@ -191,16 +209,17 @@ export class BoardScene extends Phaser.Scene {
     }
     this.highlightLayer = this.add.graphics().setDepth(1);
     this.bestLayer = this.add.graphics().setDepth(9);
-    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      const square = this.squareAt(pointer.x, pointer.y);
-      if (square !== null) this.onSquare(square);
-    });
-    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
-      const square = this.squareAt(pointer.x, pointer.y);
-      const hot = square !== null && (this.highlight.selectable.includes(square) || this.highlight.targets.includes(square));
-      this.game.canvas.style.cursor = hot ? "pointer" : "default";
-    });
+    this.premoveLayer = this.add.graphics().setDepth(8.5);
+    this.dragShadow = this.add.graphics().setDepth(19);
+    this.input.mouse?.disableContextMenu();
+    this.game.canvas.style.touchAction = "none";
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.handleDown(pointer));
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => this.handleMove(pointer));
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => this.handleUp(pointer));
+    this.input.on("pointerupoutside", (pointer: Phaser.Input.Pointer) => this.handleUp(pointer));
+    this.events.once("shutdown", () => this.clearPress());
     this.ready = true;
+    this.applyTheme(null);
     this.render();
   }
 
@@ -214,6 +233,235 @@ export class BoardScene extends Phaser.Scene {
     if (this.ready) this.drawHighlights();
   }
 
+  /** Thème de plateau, jeu de pièces, accent, mode de déplacement, animations : appliqué sans recharger. */
+  setTheme(theme: ThemeSettings) {
+    const prev = this.theme;
+    this.theme = theme;
+    if (this.ready) this.applyTheme(prev);
+  }
+
+  private applyTheme(prev: ThemeSettings | null) {
+    const theme = this.theme;
+    ACCENT = hexToNum(accentColor(theme.accent));
+    PREMOVE = hexToNum(premoveColor(theme.accent));
+    this.tweens.timeScale = theme.reduceMotion ? 20 : 1;
+    if (!prev || prev.pieces !== theme.pieces) {
+      this.ensurePieceTextures(theme.pieces);
+      if (prev) this.retextureAll();
+    }
+    if (prev && prev.board !== theme.board && this.view) this.drawBoard();
+    if (prev && !this.dragEnabled && this.drag) this.cancelDrag();
+    this.drawHighlights();
+    this.drawPremove();
+  }
+
+  private get dragEnabled() {
+    return this.theme.move === "drag";
+  }
+
+  private ensurePieceTextures(setId: ThemeSettings["pieces"]) {
+    const set = pieceSet(setId);
+    for (const color of ["white", "black"] as Color[]) {
+      for (const kind of KINDS) {
+        const key = pieceKey(color, kind, setId);
+        if (this.textures.exists(key)) continue;
+        const tex = this.textures.createCanvas(key, PIECE_TEX, PIECE_TEX);
+        if (!tex) continue;
+        drawPiece(tex.getSourceImage() as HTMLCanvasElement, kind, color, color === "white" ? set.white : set.black);
+        tex.refresh();
+      }
+    }
+  }
+
+  private retextureAll() {
+    const byId = new Map<number, Piece>();
+    for (const p of this.view?.board ?? []) if (p) byId.set(p.id, p);
+    for (const [id, sprite] of this.sprites) {
+      const piece = byId.get(id);
+      if (piece) sprite.setTexture(this.textureFor(piece));
+    }
+  }
+
+  /** Premove en attente (cases d'origine et d'arrivée teintées, flèche pointillée) ; `failed` fait clignoter. */
+  setPremove(pm: { from: Square; to: Square; failed?: boolean } | null) {
+    const was = this.premove;
+    this.premove = pm;
+    if (!this.ready) return;
+    this.drawPremove();
+    if (pm?.failed && !was?.failed) {
+      this.tweens.killTweensOf(this.premoveLayer);
+      this.premoveLayer.setAlpha(1);
+      this.tweens.add({ targets: this.premoveLayer, alpha: 0.08, duration: 110, yoyo: true, repeat: 2 });
+    } else if (!pm?.failed) {
+      this.tweens.killTweensOf(this.premoveLayer);
+      this.premoveLayer.setAlpha(1);
+    }
+  }
+
+  private drawPremove() {
+    const g = this.premoveLayer;
+    g.clear();
+    const pm = this.premove;
+    if (!pm) return;
+    for (const square of [pm.from, pm.to]) {
+      const { x, y } = this.cell(square);
+      g.fillStyle(PREMOVE, 0.4).fillRect(x, y, TILE, TILE);
+      g.lineStyle(3, PREMOVE, 0.95).strokeRect(x + 2, y + 2, TILE - 4, TILE - 4);
+    }
+    const a = this.center(pm.from);
+    const b = this.center(pm.to);
+    drawDashedArrow(g, a.x, a.y, b.x, b.y, PREMOVE);
+  }
+
+  // ---- entrée : clic, glisser-déposer, appui long ----------------------------------------------
+
+  private idAt(square: Square): number | null {
+    for (const [id, sq] of this.placed) if (sq === square) return id;
+    return null;
+  }
+
+  private clearPress() {
+    this.pressTimer?.remove(false);
+    this.pressTimer = null;
+    this.press = null;
+  }
+
+  private handleDown(pointer: Phaser.Input.Pointer) {
+    if (pointer.rightButtonDown()) {
+      this.onCancelPremove();
+      return;
+    }
+    const square = this.squareAt(pointer.x, pointer.y);
+    if (square === null) return;
+    this.longPressed = false;
+    this.pressTimer?.remove(false);
+    this.pressTimer = this.premove
+      ? this.time.delayedCall(550, () => {
+          this.pressTimer = null;
+          if (!this.drag) {
+            this.longPressed = true;
+            this.press = null;
+            this.onCancelPremove();
+          }
+        })
+      : null;
+    const id = this.idAt(square);
+    if (this.dragEnabled && id !== null && this.canDrag(square)) {
+      // Clic ou glisser ? On attend le relâchement ou le dépassement du seuil de 4 px.
+      this.press = { square, x: pointer.x, y: pointer.y, id };
+      return;
+    }
+    this.press = null;
+    this.onSquare(square);
+  }
+
+  private handleMove(pointer: Phaser.Input.Pointer) {
+    const square = this.squareAt(pointer.x, pointer.y);
+    const hot = square !== null && (this.highlight.selectable.includes(square) || this.highlight.targets.includes(square));
+    this.game.canvas.style.cursor = this.drag ? "grabbing" : hot ? "pointer" : "default";
+    if (this.press && !this.drag && exceedsDragThreshold(pointer.x - this.press.x, pointer.y - this.press.y)) {
+      this.pressTimer?.remove(false);
+      this.pressTimer = null;
+      this.startDrag(this.press, pointer);
+    }
+    if (this.drag) this.updateDrag(pointer);
+  }
+
+  private handleUp(pointer: Phaser.Input.Pointer) {
+    this.pressTimer?.remove(false);
+    this.pressTimer = null;
+    if (this.drag) {
+      this.finishDrag(pointer);
+      return;
+    }
+    const press = this.press;
+    this.press = null;
+    if (press && !this.longPressed) this.onSquare(press.square);
+  }
+
+  private startDrag(press: { square: Square; id: number | null }, pointer: Phaser.Input.Pointer) {
+    const sprite = press.id !== null ? this.sprites.get(press.id) : undefined;
+    this.press = null;
+    if (!sprite || press.id === null) {
+      this.onSquare(press.square);
+      return;
+    }
+    this.tweens.killTweensOf(sprite);
+    this.drag = { id: press.id, from: press.square, sprite, hover: press.square };
+    sprite.setDepth(20).setScale(PIECE_SCALE * 1.14).setAlpha(1);
+    this.onDragStart(press.square);
+    this.updateDrag(pointer);
+  }
+
+  private updateDrag(pointer: Phaser.Input.Pointer) {
+    const drag = this.drag;
+    if (!drag) return;
+    const x = Phaser.Math.Clamp(pointer.x, FRAME, SIZE - FRAME);
+    const y = Phaser.Math.Clamp(pointer.y, FRAME, SIZE - FRAME);
+    // La pièce est soulevée au-dessus du doigt ; son ombre reste plus bas.
+    drag.sprite.setPosition(x, y - 12);
+    this.dragShadow.clear().fillStyle(0x000000, 0.34).fillEllipse(x + 3, y + 24, 56, 16);
+    const hover = this.squareAt(pointer.x, pointer.y);
+    if (hover !== drag.hover) {
+      drag.hover = hover;
+      this.drawHighlights();
+    }
+  }
+
+  private finishDrag(pointer: Phaser.Input.Pointer) {
+    const drag = this.drag;
+    if (!drag) return;
+    const to = this.squareAt(pointer.x, pointer.y);
+    this.drag = null;
+    this.dragShadow.clear();
+    this.game.canvas.style.cursor = "default";
+    const verdict = this.onDrop(drag.from, to);
+    const { sprite } = drag;
+    const settle = () => {
+      sprite.setDepth(2);
+      if (this.sprites.get(drag.id) === sprite) sprite.setScale(PIECE_SCALE);
+    };
+    if (verdict === "snap" && to !== null) {
+      const t = this.center(to);
+      this.tweens.add({ targets: sprite, x: t.x, y: t.y, scale: PIECE_SCALE, duration: 70, ease: "Quad.Out", onComplete: settle });
+      // Filet de sécurité : si le serveur refuse le coup, la pièce ne reste pas sur une case fausse.
+      this.time.delayedCall(1500, () => {
+        const home = this.placed.get(drag.id);
+        if (this.sprites.get(drag.id) !== sprite || home === undefined || this.tweens.isTweening(sprite)) return;
+        const c = this.center(home);
+        if (Math.abs(sprite.x - c.x) > 1 || Math.abs(sprite.y - c.y) > 1) this.slideHome(drag.id, sprite);
+      });
+    } else {
+      this.slideHome(drag.id, sprite);
+    }
+    this.drawHighlights();
+  }
+
+  private slideHome(id: number, sprite: Sprite) {
+    const home = this.placed.get(id);
+    if (home === undefined) return;
+    const c = this.center(home);
+    this.tweens.killTweensOf(sprite);
+    this.tweens.add({
+      targets: sprite,
+      x: c.x,
+      y: c.y,
+      scale: PIECE_SCALE,
+      duration: 170,
+      ease: "Cubic.Out",
+      onComplete: () => sprite.setDepth(2),
+    });
+  }
+
+  /** Abandonne un glisser en cours (nouvelle position, thème, désactivation) : la pièce rentre. */
+  private cancelDrag() {
+    const drag = this.drag;
+    if (!drag) return;
+    this.drag = null;
+    this.dragShadow.clear();
+    this.slideHome(drag.id, drag.sprite);
+  }
+
   /** Where each piece currently stands, for tests and debugging. */
   debug() {
     return {
@@ -224,6 +472,9 @@ export class BoardScene extends Phaser.Scene {
       traps: [...this.traps.keys()],
       terrain: [...this.terrain.keys()],
       best: this.best,
+      theme: this.theme,
+      premove: this.premove,
+      dragging: this.drag ? { id: this.drag.id, from: this.drag.from, hover: this.drag.hover } : null,
     };
   }
 
@@ -305,6 +556,7 @@ export class BoardScene extends Phaser.Scene {
     const key = actionKey(view);
     const advanced = !fresh && key !== this.lastKey;
     this.lastKey = key;
+    if (this.drag && (fresh || advanced)) this.cancelDrag();
     const ctx = analyse(advanced ? view.events : []);
     this.reconcilePieces(view, !fresh, ctx);
     this.reconcileTerrain(view, !fresh, ctx);
@@ -317,16 +569,24 @@ export class BoardScene extends Phaser.Scene {
   }
 
   private drawBoard() {
-    const key = `board-${this.orientation}`;
+    const colors = boardTheme(this.theme.board);
+    const key = `board-${this.orientation}-${this.theme.board}`;
     if (!this.textures.exists(key)) {
       const tex = this.textures.createCanvas(key, SIZE, SIZE);
       if (tex) {
-        drawBoard(tex.getSourceImage() as HTMLCanvasElement, this.orientation);
+        drawBoard(tex.getSourceImage() as HTMLCanvasElement, this.orientation, colors);
         tex.refresh();
+        this.boardKeys.add(key);
       }
     }
     this.boardImage?.destroy();
     this.boardImage = this.add.image(0, 0, key).setOrigin(0).setDepth(0);
+    // Les plateaux d'un ancien thème ne servent plus : on libère leur texture.
+    for (const old of this.boardKeys) {
+      if (old === key) continue;
+      this.boardKeys.delete(old);
+      if (this.textures.exists(old)) this.textures.remove(old);
+    }
   }
 
   private drawHighlights() {
@@ -340,8 +600,8 @@ export class BoardScene extends Phaser.Scene {
     for (const e of view.events) {
       for (const square of touchedSquares(e)) {
         const { x, y } = this.cell(square);
-        g.fillStyle(ACCENT, 0.22).fillRect(x, y, TILE, TILE);
-        g.lineStyle(2, ACCENT, 0.55).strokeRect(x + 1, y + 1, TILE - 2, TILE - 2);
+        g.fillStyle(ACCENT, 0.3).fillRect(x, y, TILE, TILE);
+        g.lineStyle(2, ACCENT, 0.7).strokeRect(x + 1, y + 1, TILE - 2, TILE - 2);
       }
     }
     if (view.in_check) {
@@ -380,6 +640,12 @@ export class BoardScene extends Phaser.Scene {
         g.fillStyle(TEXT, 0.95).fillCircle(x, y, 4);
       }
     }
+    const hover = this.drag?.hover;
+    if (hover !== null && hover !== undefined && hover !== this.drag?.from && this.highlight.targets.includes(hover)) {
+      const { x, y } = this.cell(hover);
+      g.fillStyle(ACCENT, 0.32).fillRect(x, y, TILE, TILE);
+      g.lineStyle(4, ACCENT, 0.95).strokeRect(x + 2, y + 2, TILE - 4, TILE - 4);
+    }
     if (this.best && view.ply === this.best.ply) {
       const a = this.center(this.best.from);
       const b = this.center(this.best.to);
@@ -404,7 +670,7 @@ export class BoardScene extends Phaser.Scene {
 
   private textureFor(piece: Piece): string {
     if (piece.wall && this.textures.exists(stoneKey(piece.color, piece.kind))) return stoneKey(piece.color, piece.kind);
-    return pieceKey(piece.color, piece.kind);
+    return pieceKey(piece.color, piece.kind, this.theme.pieces);
   }
 
   private makeSprite(piece: Piece, x: number, y: number): Sprite {
@@ -1113,6 +1379,7 @@ export class BoardScene extends Phaser.Scene {
   }
 
   private cameraShake(duration: number, intensity: number, delay: number) {
+    if (this.theme.reduceMotion) return;
     this.time.delayedCall(delay, () => {
       if (this.sys.isActive()) this.cameras.main.shake(duration, intensity);
     });
