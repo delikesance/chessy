@@ -3,7 +3,8 @@
 //! `/api`. Authentication is optional (`Authorization: Bearer <token>`):
 //! Solo games are only readable by their player, the others are public.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, QueryRejection};
@@ -91,6 +92,20 @@ fn viewer(app: &App, headers: &HeaderMap) -> ApiResult<Option<String>> {
         Some(token) => Ok(app.store().player_by_token(token)?),
         None => Ok(None),
     }
+}
+
+/// One lock per `(game, depth)` analysis, shared by whoever asks for it. It only
+/// serialises requests: what they compute is read from and written to their own store.
+fn in_flight(key: String) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if locks.len() > 256 {
+        locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+    }
+    locks.entry(key).or_default().clone()
 }
 
 fn json_body(body: String) -> Response {
@@ -194,14 +209,17 @@ async fn game_analysis(
     if let Some(cached) = app.store().analysis_get(&stored.id, depth)? {
         return Ok(json_body(cached));
     }
+    // The same analysis requested twice is computed once: the second request
+    // waits for the first, then finds it in the cache.
+    let same_analysis = in_flight(format!("{}:{depth}", stored.id));
+    let _first = same_analysis.lock().await;
+    if let Some(cached) = app.store().analysis_get(&stored.id, depth)? {
+        return Ok(json_body(cached));
+    }
     let _turn = SEARCHES
         .acquire()
         .await
         .map_err(|_| ApiError::internal("internal"))?;
-    // Someone may have finished the same analysis while we waited.
-    if let Some(cached) = app.store().analysis_get(&stored.id, depth)? {
-        return Ok(json_body(cached));
-    }
     let game_id = stored.id.clone();
     let result = blocking(move || {
         let (loadouts, actions) = stored.replayable().expect("checked above");

@@ -946,6 +946,21 @@ async fn analyses_are_cached_per_game_and_depth() {
 }
 
 #[tokio::test]
+async fn simultaneous_requests_get_the_same_analysis() {
+    let (app, _, api) = setup();
+    let id = blunder_game(&app, &api).await;
+    let path = format!("/api/games/{id}/analysis?depth=3");
+    let (a, b, c) = tokio::join!(
+        api.get(&path, None),
+        api.get(&path, None),
+        api.get(&path, None)
+    );
+    assert_eq!(a.0, StatusCode::OK);
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+}
+
+#[tokio::test]
 async fn an_analysis_is_repeatable() {
     // The same moves in two separate servers give the very same analysis.
     let mut results = Vec::new();
