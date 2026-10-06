@@ -12,6 +12,8 @@
 //! * if the game is too long for the time budget, the depth drops for the
 //!   remaining plies (`reduced_from_ply`).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chessy_engine::analysis::{
@@ -53,6 +55,72 @@ pub struct Analysis {
     pub reduced_from_ply: Option<u32>,
 }
 
+/// Threads one analysis may use: positions are independent of each other.
+fn worker_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 4)
+}
+
+/// `work(0..n)` spread over `threads` scoped threads; results in index order.
+fn parallel_map<T: Send>(n: usize, threads: usize, work: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<T>>> = (0..n).map(|_| Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, n.max(1)) {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= n {
+                    break;
+                }
+                let value = work(i);
+                *slots[i].lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap_or_else(|e| e.into_inner())
+                .expect("every index was worked")
+        })
+        .collect()
+}
+
+/// How deep to search now: starts at the requested depth and drops by one
+/// whenever the positions done so far say the rest would not fit in time.
+struct Pace {
+    depth: u32,
+    since: Instant,
+    /// Positions finished since `since`.
+    done: u32,
+    /// Positions finished in all.
+    finished: usize,
+}
+
+impl Pace {
+    fn depth_now(&mut self, total: usize, end: Instant) -> u32 {
+        if self.depth > 1 && self.done >= 2 {
+            let per = self.since.elapsed() / self.done;
+            let left = end.saturating_duration_since(Instant::now());
+            let remaining = (total - self.finished.min(total)) as u32;
+            if per * remaining > left {
+                self.depth -= 1;
+                self.since = Instant::now();
+                self.done = 0;
+            }
+        }
+        self.depth
+    }
+
+    fn finish(&mut self) {
+        self.done += 1;
+        self.finished += 1;
+    }
+}
+
 /// Analyses a replayed game to `depth` within `budget`.
 pub fn analyze(replay: &Replay, depth: u32, budget: Duration) -> Analysis {
     let started = Instant::now();
@@ -60,46 +128,38 @@ pub fn analyze(replay: &Replay, depth: u32, budget: Duration) -> Analysis {
     let stop = || Instant::now() >= hard;
     let n = replay.steps.len();
     let depth = depth.max(1);
+    let threads = worker_count();
 
     // Phase 1: the best move and score of every position, getting shallower
     // when the projected time would not fit (a fifth of the budget is kept
     // for phase 2, the search of the played actions).
     let phase1_end = started + budget.mul_f64(0.8);
-    let mut roots: Vec<Option<Searched>> = Vec::with_capacity(n + 1);
-    let mut depths = Vec::with_capacity(n + 1);
-    let mut current = depth;
-    let mut reduced_from = None;
-    let mut since = Instant::now();
-    let mut done = 0u32;
-    for i in 0..=n {
-        if done >= 2 && current > 1 {
-            let per = since.elapsed() / done;
-            let left = phase1_end.saturating_duration_since(Instant::now());
-            if per * (n + 1 - i) as u32 > left {
-                current -= 1;
-                reduced_from.get_or_insert(i as u32 + 1);
-                since = Instant::now();
-                done = 0;
-            }
-        }
+    let pace = Mutex::new(Pace {
+        depth,
+        since: started,
+        done: 0,
+        finished: 0,
+    });
+    let searched = parallel_map(n + 1, threads, |i| {
+        let now = pace
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .depth_now(n + 1, phase1_end);
         let point = replay.point(i);
         let root = match terminal_score(point.outcome, point.pos.side) {
             Some(_) => None,
-            None => Some(search_position(&point.pos, current, &stop)),
+            None => Some(search_position(&point.pos, now, &stop)),
         };
-        roots.push(root);
-        depths.push(current);
-        done += 1;
-    }
+        pace.lock().unwrap_or_else(|e| e.into_inner()).finish();
+        (root, now)
+    });
+    let roots: Vec<Option<Searched>> = searched.iter().map(|&(r, _)| r).collect();
+    let depths: Vec<u32> = searched.iter().map(|&(_, d)| d).collect();
+    let reduced_from = depths.iter().position(|&d| d < depth).map(|i| i as u32 + 1);
 
     // Phase 2: rate every action against the best move of its position.
-    let mut plies = Vec::with_capacity(n);
-    let mut losses: [Vec<i32>; 2] = [Vec::new(), Vec::new()];
-    let mut summary = PerSide {
-        white: Counts::default(),
-        black: Counts::default(),
-    };
-    for (i, step) in replay.steps.iter().enumerate() {
+    let rated = parallel_map(n, threads, |i| {
+        let step = &replay.steps[i];
         let before = replay.point(i);
         let after = replay.point(i + 1);
         let side = before.pos.side;
@@ -121,13 +181,8 @@ pub fn analyze(replay: &Replay, depth: u32, budget: Duration) -> Analysis {
             0
         } else {
             let value = match terminal_score(after.outcome, after_side) {
-                Some(t) => {
-                    if after_side == step.mover {
-                        t
-                    } else {
-                        -t
-                    }
-                }
+                Some(t) if after_side == step.mover => t,
+                Some(t) => -t,
                 None => value_after(
                     &after.pos,
                     step.mover,
@@ -138,21 +193,33 @@ pub fn analyze(replay: &Replay, depth: u32, budget: Duration) -> Analysis {
             (best_cp - cap(value)).max(0)
         };
         let label = label_for(loss, is_best);
-        summary_of(&mut summary, side, label);
-        losses[side.index()].push(loss);
-
         let best = best_root.best.map(|mv| BestView {
             action: mv.into(),
             notation: simulated_move_notation(&before.pos, mv),
             eval_cp: cap(white_pov(best_root.score, side)),
         });
-        plies.push(PlyAnalysis {
-            ply: i as u32 + 1,
-            eval_cp: cap(white_pov(eval_after, after_side)),
-            best,
-            loss_cp: loss,
-            label,
-        });
+        (
+            side,
+            PlyAnalysis {
+                ply: i as u32 + 1,
+                eval_cp: cap(white_pov(eval_after, after_side)),
+                best,
+                loss_cp: loss,
+                label,
+            },
+        )
+    });
+
+    let mut losses: [Vec<i32>; 2] = [Vec::new(), Vec::new()];
+    let mut summary = PerSide {
+        white: Counts::default(),
+        black: Counts::default(),
+    };
+    let mut plies = Vec::with_capacity(n);
+    for (side, ply) in rated {
+        summary_of(&mut summary, side, ply.label);
+        losses[side.index()].push(ply.loss_cp);
+        plies.push(ply);
     }
 
     Analysis {
