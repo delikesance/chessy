@@ -23,6 +23,21 @@ pub(super) struct Rematch {
     /// Who played white last time; colours swap.
     white: PlayerId,
     requested_by: Option<PlayerId>,
+    /// A rematch against the Solo bot: granted at once, see `solo`.
+    pub solo: Option<super::solo::SoloSetup>,
+}
+
+impl Rematch {
+    /// The rematch chance after a Solo game against the synthetic `bot` id.
+    pub(super) fn against_bot(bot: PlayerId, setup: super::solo::SoloSetup) -> Self {
+        Rematch {
+            opponent: bot.clone(),
+            rated: false,
+            white: bot,
+            requested_by: None,
+            solo: Some(setup),
+        }
+    }
 }
 
 /// Control characters become spaces (newlines, tabs) or vanish; the result is trimmed.
@@ -422,6 +437,7 @@ impl Hub {
                     rated,
                     white: players[0].clone(),
                     requested_by: None,
+                    solo: None,
                 },
             );
         }
@@ -456,6 +472,9 @@ impl Hub {
     }
 
     pub fn rematch_request(&mut self, player: &str) {
+        if let Some(setup) = self.rematches.get(player).and_then(|r| r.solo) {
+            return self.start_solo_rematch(player, setup);
+        }
         let Some(opponent) = self.rematch_pair(player) else {
             self.drop_rematch(player, false);
             return self.fail(player, "no_rematch", "a rematch is not possible");
