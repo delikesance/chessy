@@ -15,7 +15,10 @@
 .co-card { display: grid; grid-template-rows: auto 1fr auto; gap: 12px; width: 100%; height: 100%; padding: 16px; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-l); cursor: pointer; transition: background 0.12s, border-color 0.12s; }
 .co-card:hover { background: var(--surface-2); border-color: var(--line-3); }
 .co-card.on { border-color: var(--text); box-shadow: inset 0 -3px 0 var(--fam); background: var(--surface-2); }
-.co-art { display: grid; place-items: center; height: 104px; border-radius: var(--radius); background: var(--sunken); border: 1px solid var(--line); }
+.co-art { position: relative; display: grid; place-items: center; height: 104px; border-radius: var(--radius); background: var(--sunken); border: 1px solid var(--line); }
+/* Au survol : l'aperçu animé remplace l'icône. */
+.co-art .sv-fig { height: 100%; padding: 4px; }
+.co-art .sv { height: 100%; width: auto; border-radius: 8px; }
 .co-card-body { display: grid; gap: 4px; align-content: start; }
 .co-name { font-weight: 600; font-size: 16px; letter-spacing: -0.01em; }
 .co-fam { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fam); }
@@ -25,12 +28,13 @@
 .co-deck { color: var(--text); border-color: var(--text); }
 .co-empty { padding: 40px; text-align: center; color: var(--muted); grid-column: 1; }
 
-.co-detail { position: sticky; top: 84px; padding: 24px; outline: none; min-height: 200px; }
+.co-detail { position: sticky; top: 84px; padding: 24px; outline: none; min-height: 200px; max-height: calc(100vh - 104px); overflow-y: auto; }
 .co-placeholder { font-size: 14px; text-align: center; padding: 32px 0; }
-.co-detail-art { display: grid; place-items: center; height: 200px; border-radius: var(--radius); background: var(--sunken); border: 1px solid var(--line); margin-bottom: 18px; }
+.co-detail-art { position: relative; display: grid; place-items: center; height: 116px; border-radius: var(--radius); background: var(--sunken); border: 1px solid var(--line); margin-bottom: 18px; }
 .co-detail-fam { color: var(--fam); }
 .co-detail-name { font-size: 26px; letter-spacing: -0.02em; font-weight: 600; margin: 4px 0 12px; }
 .co-sub { font-family: var(--font-mono); font-size: 11px; font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 20px 0 8px; }
+.co-detail .sv-fig { max-width: 320px; margin: 0 auto; }
 .co-rules { font-size: 15px; color: var(--text-2); line-height: 1.55; }
 .co-note { font-size: 13px; margin-top: 14px; line-height: 1.5; }
 .co-close { display: none; }

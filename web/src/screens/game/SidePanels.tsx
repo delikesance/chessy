@@ -5,6 +5,7 @@ import type { Piece, SkillSlot, StateView } from "../../protocol";
 import { skillInfo } from "../../skills";
 import { store, type ChatLine } from "../../store";
 import { SkillArt } from "../../ui/SkillArt";
+import { UniqueBadge } from "../../ui/UniqueBadge";
 
 interface SkillListProps {
   slots: SkillSlot[];
@@ -81,7 +82,7 @@ export function SkillList({ slots, view, myTurn, active, onToggle }: SkillListPr
             <li key={slot.skill}>
               <button
                 type="button"
-                className={`gm-skill${on ? " on" : ""}${slot.used ? " used" : ""}`}
+                className={`gm-skill${on ? " on" : ""}${slot.used ? " used" : ""}${info.unique ? " foil" : ""}`}
                 style={{ "--fam": `var(--fam-${info.family})` } as CSSProperties}
                 disabled={!usable}
                 aria-pressed={on}
@@ -91,6 +92,7 @@ export function SkillList({ slots, view, myTurn, active, onToggle }: SkillListPr
               >
                 <span className="gm-skill-art">
                   <SkillArt id={slot.skill} size={36} />
+                  {info.unique && <UniqueBadge />}
                 </span>
                 <span className="gm-skill-txt">
                   <span className="gm-skill-name">
