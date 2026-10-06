@@ -12,7 +12,7 @@ Une compétence est une capacité donnant un avantage sur le jeu sans pour autan
 
 ## Comment obtenir les compétences ?
 
-Les compétences s'obtiennent en gagnant une partie. En cas de victoire, une proposition est faite : prendre une compétence choisie à l'adversaire OU prendre une compétence aléatoire. Si vous choisissez une compétence dans le deck adverse, celui-ci la perd et vous la gagnez. Si vous choisissez l'aléatoire, l'adversaire perd une compétence aléatoire de son deck. Vous ne disposez que de 7 slots maximum : si vous avez déjà 7 compétences, vous devez en remplacer une OU passer l'obtention.
+Les compétences s'obtiennent en gagnant une partie **classée** (voir `docs/spec-v2.md` §2 : les parties amicales, contre l'IA ou abandonnées à zéro coup n'en donnent pas). En cas de victoire, une proposition est faite : prendre une compétence choisie à l'adversaire OU prendre une compétence aléatoire. Si vous choisissez une compétence dans le deck adverse, celui-ci la perd et vous la gagnez. Si vous choisissez l'aléatoire, l'adversaire perd une compétence aléatoire de son deck. Vous ne disposez que de 7 slots maximum : si vous avez déjà 7 compétences, vous devez en remplacer une OU passer l'obtention.
 
 ## Les compétences uniques
 

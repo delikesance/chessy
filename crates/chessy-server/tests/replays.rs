@@ -1380,7 +1380,12 @@ async fn new_games_are_recorded_next_to_old_ones() {
 
 #[tokio::test]
 async fn a_long_game_is_analysed_within_the_budget() {
-    let (app, store, api) = setup();
+    // The script plays 120 plies in a blink: far above what a person sends.
+    let (app, store) = new_app(HubConfig {
+        msg_burst: 1_000,
+        ..HubConfig::default()
+    });
+    let api = Api::new(&app);
     let a = account(&app, &store, "alice");
     let b = account(&app, &store, "bobby");
     let a_deck = [SkillId::Teleportation, SkillId::Freeze, SkillId::Tornado];

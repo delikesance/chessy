@@ -7,6 +7,7 @@ pub mod bot;
 pub mod elo;
 pub mod games_store;
 pub mod hub;
+pub mod limits;
 pub mod protocol;
 pub mod replay;
 pub mod social;

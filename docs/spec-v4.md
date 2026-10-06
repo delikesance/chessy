@@ -144,3 +144,28 @@ Précisions et écarts pour §1 et §2, tels que livrés dans `crates/` (fichier
 
 ### Tests
 `crates/chessy-engine/tests/notation.rs` (notation, étiquettes, précision) et `crates/chessy-server/tests/replays.rs` : enregistrement (duel classé, amical, invités, salle, défi, revanche, solo, annulée), exclusion du solo du profil et du classement, pagination, migration d'une ancienne base (et nouvelles parties à côté des anciennes), replay fidèle d'une partie réelle avec compétences (comparaison image par image avec les `state` reçus par chaque joueur, déterminisme), étiquettes sur une gaffe évidente, mat à ±2000, cache et profondeur, réduction de profondeur au-delà du budget, exploration (valide, illégale, `bad_ply`, limites, position finie, compétences), contrôle d'accès, partie longue sous le budget.
+
+## Durcissement (sécurité)
+
+Revue de sécurité du serveur : cinq points, tous réglables dans `HubConfig` (défauts sans effet sur le jeu normal) et couverts par `crates/chessy-server/tests/hardening.rs` et `tests/ws.rs`.
+
+### Récompenses (voir aussi `docs/spec-v2.md` §2)
+- Seule une partie **classée** (file classée, deux comptes, au moins `MIN_RATED_PLIES` = 4 plies, plafond ci-dessous non atteint) crée une récompense. Amical, Solo, abandon ou déconnexion à zéro coup : `reward: null`.
+- `PendingReward` garde `loser_deck`, le deck du perdant à la fin de la partie, et `created`. `offer_for` et `resolve_reward` n'acceptent que `loser_deck ∩ deck actuel du perdant`, moins ce que le gagnant possède déjà (un unique doit donc encore appartenir au perdant). Hors de cet ensemble : `invalid_reward` (réclamation conservée). `reward_ttl` (6 h) : une récompense plus vieille répond `no_reward` et n'est plus proposée dans `welcome`.
+
+### Plafond de parties classées entre les mêmes comptes (anti-boost d'Elo)
+- `rated_pair_max` (3) parties classées entre deux mêmes comptes (peu importe la couleur) sur `rated_pair_window` (1 h) ; compté dans `games` (`rated = 1`, `finished_at`), donc robuste au redémarrage. Les parties de moins de 4 plies ne comptent pas (elles ne font pas bouger l'Elo).
+- À l'ouverture d'une partie entre deux comptes (revanche, ou toute autre route qui passe `rated = true`), si le plafond est atteint la partie est ouverte **non classée** : `deck_select.rated` et `state.rated` valent `false`, `game_over` a `rated:false`, `elo:null`, `reward:null`, ni Elo ni compteurs ne bougent.
+- File classée : une paire plafonnée n'est **pas appariée** (elle attend quelqu'un d'autre, ou joue en file amicale) ; le serveur ne fait qu'une requête de comptage par paire candidate retenue.
+
+### Sessions
+- `POST /api/auth/logout` supprime la session **puis** appelle `App::session_revoked(token)` : la connexion WebSocket authentifiée avec ce jeton reçoit `error {code:"session_revoked"}`, est fermée par le serveur et traitée comme une déconnexion (`opponent_status`, forfait après la grâce). Ses messages suivants sont ignorés. Une autre session du même compte (autre jeton) n'est pas touchée.
+- Client : à `session_revoked` (déconnexion depuis un autre onglet ou appareil) le jeton est oublié et la socket repart en invité, une seule fois ; `logout()` détache sa propre socket avant l'appel REST pour ne pas se reconnecter deux fois.
+
+### Quotas par connexion
+- `ws` : jeton-seau par socket (`msg_rate` 20/s, `msg_burst` 40) sur **toutes** les trames, y compris illisibles ; au plus 5 trames avant `hello`. Dépassement : la trame est ignorée et l'expéditeur reçoit `error rate_limited` une fois par série ; après `flood_disconnect_after` (100) refus de suite : `error flooded` puis fermeture. Ces contrôles ont lieu avant de prendre le verrou du hub.
+- Hub : second jeton-seau par joueur (mêmes paramètres) pondéré : `user_search`, `friend_*`, `friends_list`, `challenge*` et `solo_start` coûtent `expensive_cost` (4), les autres 1. Le chat garde son intervalle (`chat_interval`, 1 s, `rate_limited`).
+- Files d'envoi : l'`UnboundedSender` est conservé, mais la tâche de la socket coupe la connexion si plus de `outbound_queue_cap` (1000) messages attendent d'être écrits, ou si une écriture dépasse `write_timeout` (10 s) ; pas de grosse refonte de l'API `App::connect`.
+- Salons : au plus `lobby_cap` (1000) joueurs dans la file classée (`queue_full`, la file est quadratique) et autant de salles ouvertes (`rooms_full`). La file amicale ne contient jamais plus d'un joueur ; une personne n'a qu'un défi ou une salle ouverts.
+- Mesure (`flooding_with_the_default_quota_*`, `even_with_the_quota_off_*`, `cargo test -p chessy-server --test hardening -- --nocapture`) : 10 000 `user_search` d'un client pendant qu'une partie tourne sur une horloge de 400 ms. Avec les quotas : ≈ 30 ms au total, plus long maintien du verrou ≈ 0,2 à 0,8 ms, la partie est jugée à l'heure. Quotas désactivés : ≈ 800 ms pour les 10 000, plus long maintien du verrou ≈ 1,5 à 2 ms (une requête SQLite), le drapeau tombe pendant le flot (les timers ne sont pas affamés). `App::max_lock_hold()` expose cette mesure.
+- Limites connues : le nombre de connexions simultanées n'est pas plafonné (à faire au niveau du reverse proxy), et la limite de 16 Kio par message est inchangée.

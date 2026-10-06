@@ -1,6 +1,7 @@
 //! Shares the [`Hub`] across connections and runs its timers.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,9 @@ const LOGIN_WINDOW: Duration = Duration::from_secs(300);
 
 pub struct App {
     hub: Mutex<Hub>,
+    config: HubConfig,
+    /// The longest the hub lock has been held in one go, in nanoseconds.
+    max_hold_ns: AtomicU64,
     store: Store,
     /// Recent failed logins per lower-cased username: (count, window start).
     login_failures: Mutex<HashMap<String, (u32, Instant)>>,
@@ -26,6 +30,8 @@ impl App {
     pub fn new(store: Store, config: HubConfig) -> Arc<Self> {
         Arc::new(App {
             hub: Mutex::new(Hub::new(store.clone(), config)),
+            config,
+            max_hold_ns: AtomicU64::new(0),
             store,
             login_failures: Mutex::new(HashMap::new()),
         })
@@ -72,6 +78,37 @@ impl App {
         map.remove(&username.to_ascii_lowercase());
     }
 
+    pub fn config(&self) -> &HubConfig {
+        &self.config
+    }
+
+    /// The longest single hold of the hub lock so far (a measure of how much
+    /// one message can delay everyone else, timers included).
+    pub fn max_lock_hold(&self) -> Duration {
+        Duration::from_nanos(self.max_hold_ns.load(Ordering::Relaxed))
+    }
+
+    /// Resets [`Self::max_lock_hold`].
+    pub fn reset_lock_hold(&self) {
+        self.max_hold_ns.store(0, Ordering::Relaxed);
+    }
+
+    fn note_hold(&self, since: Instant) {
+        let ns = since.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        self.max_hold_ns.fetch_max(ns, Ordering::Relaxed);
+    }
+
+    /// Whether `player` has a live WebSocket right now.
+    pub fn is_connected(&self, player: &str) -> bool {
+        let hub = self.hub.lock().unwrap_or_else(|e| e.into_inner());
+        hub.is_connected(player)
+    }
+
+    /// A session ended (logout): the connection that used it is told and closed.
+    pub fn session_revoked(self: &Arc<Self>, token: &str) {
+        self.run(|hub| hub.revoke_session(token));
+    }
+
     /// The database, for the REST API.
     pub fn store(&self) -> &Store {
         &self.store
@@ -93,8 +130,11 @@ impl App {
     fn run<R>(self: &Arc<Self>, f: impl FnOnce(&mut Hub) -> R) -> R {
         let (result, timers) = {
             let mut hub = self.hub.lock().unwrap_or_else(|e| e.into_inner());
+            let held = Instant::now();
             let result = f(&mut hub);
-            (result, hub.take_timers())
+            let timers = hub.take_timers();
+            self.note_hold(held);
+            (result, timers)
         };
         self.schedule(timers);
         result
@@ -118,8 +158,11 @@ impl App {
         }
         let timers = {
             let mut hub = self.hub.lock().unwrap_or_else(|e| e.into_inner());
+            let held = Instant::now();
             hub.on_timer(timer);
-            hub.take_timers()
+            let timers = hub.take_timers();
+            self.note_hold(held);
+            timers
         };
         self.schedule(timers);
     }
@@ -163,8 +206,9 @@ impl App {
     /// Handles one message from an established connection. Messages from a
     /// connection that has since been replaced are ignored.
     pub fn handle(self: &Arc<Self>, player: &str, conn_id: u64, msg: ClientMsg) {
+        let cost = msg.cost(self.config.expensive_cost);
         self.run(|hub| {
-            if !hub.is_current(player, conn_id) {
+            if !hub.admit(player, conn_id, cost) {
                 return;
             }
             match msg {

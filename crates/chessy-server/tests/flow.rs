@@ -104,16 +104,19 @@ fn new_app(config: HubConfig) -> (Arc<App>, Store) {
     (App::new(store.clone(), config), store)
 }
 
-/// Two connected players matched through the queue, with fixed decks and
-/// the given loadouts, both already past deck selection. Returns (white, black).
+/// Two registered accounts matched in the ranked queue (only rated games pay
+/// a reward), with fixed decks and the given loadouts, both already past deck
+/// selection. Returns (white, black).
 fn start_game_with(
     app: &Arc<App>,
     store: &Store,
     decks: [&[SkillId]; 2],
     picks: [&[SkillId]; 2],
 ) -> (Client, Client) {
-    let mut a = Client::connect(app, None);
-    let mut b = Client::connect(app, None);
+    let (_, token_a) = store.register("alice", "unused-hash", None).unwrap();
+    let (_, token_b) = store.register("bob", "unused-hash", None).unwrap();
+    let mut a = Client::connect(app, Some(token_a));
+    let mut b = Client::connect(app, Some(token_b));
     store.set_deck(&a.id, decks[0]).unwrap();
     store.set_deck(&b.id, decks[1]).unwrap();
     a.send(ClientMsg::QueueJoin { ranked: None });

@@ -134,7 +134,7 @@ export function ResultPanel({ outcome, you, rated, solo = false, elo, rematch, o
             </span>
           </div>
         ) : (
-          <p className="muted gm-elo-none">{rated ? "Partie classée non comptabilisée." : "Partie amicale : aucun Elo en jeu."}</p>
+          <p className="muted gm-elo-none">{rated ? "Partie classée non comptabilisée : ni Elo ni récompense." : "Partie amicale : ni Elo ni récompense en jeu."}</p>
         )}
 
         <div className="gm-result-actions">
