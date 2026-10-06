@@ -310,7 +310,7 @@ export function Auth() {
           <button type="button" className="btn ghost au-guest" onClick={() => navigate({ name: "home" })} disabled={loading}>
             Continuer en invité
           </button>
-          <p className="au-note">Sans compte : parties amicales uniquement, ni classement ni amis.</p>
+          <p className="au-note">Sans compte : parties amicales uniquement, ni classement, ni amis, ni compétence à gagner.</p>
         </section>
       </div>
     </main>

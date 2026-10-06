@@ -381,7 +381,33 @@ pub enum ServerMsg {
     },
 }
 
+/// Error codes after which the connection is closed.
+pub const FATAL_ERRORS: [&str; 2] = ["session_revoked", "flooded"];
+
+impl ClientMsg {
+    /// What the message costs against the per-connection quota: the ones that
+    /// query the database or notify other people weigh more.
+    pub fn cost(&self, expensive: u32) -> u32 {
+        match self {
+            ClientMsg::UserSearch { .. }
+            | ClientMsg::FriendRequest { .. }
+            | ClientMsg::FriendRespond { .. }
+            | ClientMsg::FriendRemove { .. }
+            | ClientMsg::FriendsList
+            | ClientMsg::Challenge { .. }
+            | ClientMsg::ChallengeRespond { .. }
+            | ClientMsg::SoloStart { .. } => expensive,
+            _ => 1,
+        }
+    }
+}
+
 impl ServerMsg {
+    /// Whether the server closes the connection right after sending this.
+    pub fn closes_connection(&self) -> bool {
+        matches!(self, ServerMsg::Error { code, .. } if FATAL_ERRORS.contains(&code.as_str()))
+    }
+
     pub fn notice(code: &str, username: Option<&str>) -> Self {
         ServerMsg::Notice {
             code: code.to_string(),

@@ -22,6 +22,8 @@ fn world() -> World {
     // A wide matching range: these tests are about ratings, not pairing.
     let config = HubConfig {
         ranked_range_base: 800,
+        // ...and the same two accounts meet many times.
+        rated_pair_max: u32::MAX,
         ..HubConfig::default()
     };
     let app = App::new(store.clone(), config);

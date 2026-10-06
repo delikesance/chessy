@@ -165,6 +165,71 @@ describe("store messages", () => {
     });
   });
 
+  describe("session revoked", () => {
+    let saved: Record<string, string>;
+    let sockets: { closed: boolean }[];
+
+    beforeEach(() => {
+      saved = { "chessy.token": "old" };
+      sockets = [];
+      vi.stubGlobal("localStorage", {
+        getItem: (k: string) => saved[k] ?? null,
+        setItem: (k: string, v: string) => {
+          saved[k] = v;
+        },
+        removeItem: (k: string) => {
+          delete saved[k];
+        },
+      });
+      vi.stubGlobal("location", { protocol: "http:", host: "chessy.test" });
+      vi.stubGlobal(
+        "WebSocket",
+        class {
+          static OPEN = 1;
+          readyState = 0;
+          closed = false;
+          constructor() {
+            sockets.push(this);
+          }
+          close() {
+            this.closed = true;
+          }
+          send() {}
+        },
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("forgets the token and reconnects as a guest, once", () => {
+      store.receive({ type: "error", code: "session_revoked", message: "" });
+      expect(saved["chessy.token"]).toBeUndefined();
+      expect(sockets).toHaveLength(1);
+      expect(store.getState().connection).toBe("connecting");
+      expect(store.getState().toasts[0].text).toBe("Votre session a pris fin : vous êtes repassé en invité.");
+      // As a guest there is no session to lose: no reconnection loop.
+      store.receive({ type: "error", code: "session_revoked", message: "" });
+      expect(sockets).toHaveLength(1);
+    });
+
+    it("logging out detaches the old socket and opens exactly one new one", async () => {
+      const old = new (WebSocket as unknown as new () => { closed: boolean })();
+      sockets.length = 0;
+      (store as unknown as { socket: unknown }).socket = old;
+      vi.stubGlobal("fetch", async () => ({ ok: true }));
+      await store.logout();
+      expect(old.closed).toBe(true);
+      expect(saved["chessy.token"]).toBeUndefined();
+      expect(sockets).toHaveLength(1);
+      // The server's session_revoked for the old socket arrives late and is ignored by the store's socket guard.
+      expect((store as unknown as { socket: unknown }).socket).toBe(sockets[0]);
+    });
+
+    it("explains the new quota errors", () => {
+      store.receive({ type: "error", code: "flooded", message: "x" });
+      expect(store.getState().toasts[0].text).toBe("Connexion coupée : trop de messages envoyés.");
+    });
+  });
+
   it("tracks the rematch handshake", () => {
     store.requestRematch();
     expect(store.getState().rematch).toBe("offered");

@@ -147,7 +147,7 @@ async fn running_out_of_time_loses_the_game() {
         json!({"type": "timeout", "winner": "black"})
     );
     assert_eq!(over["reason"], "timeout");
-    assert!(over["reward"].is_object(), "the winner on time is rewarded");
+    assert!(over["reward"].is_null(), "friendly games pay no reward");
     assert!(white.next("game_over")["reward"].is_null());
     let s = white.last("state");
     assert_eq!(s["outcome"], json!({"type": "timeout", "winner": "black"}));

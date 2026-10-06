@@ -674,6 +674,20 @@ impl Store {
         Ok(change)
     }
 
+    /// How many rated games `a` and `b` finished against each other (either
+    /// colour) within the last `window_secs` seconds.
+    pub fn rated_games_between(&self, a: &str, b: &str, window_secs: u64) -> StoreResult<u32> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM games
+             WHERE rated = 1
+               AND ((white = ?1 AND black = ?2) OR (white = ?2 AND black = ?1))
+               AND finished_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?3)",
+            params![a, b, format!("-{window_secs} seconds")],
+            |r| r.get(0),
+        )?)
+    }
+
     /// Atomically changes decks after a game: the loser may lose a skill, the
     /// winner may drop one (to make room) and gain one. Unique-skill ownership
     /// follows the skills; a unique skill can only be gained if it is unowned

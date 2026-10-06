@@ -68,6 +68,14 @@ Le cahier des charges ne tranche pas tout ; voici les choix faits (faciles à ch
 - Les compétences ne ciblent pas les rois (sauf Transposition et Destiny Swapper). Une pièce gelée ne donne pas échec.
 - Un nouveau joueur reçoit 3 compétences classiques au hasard ; un joueur qui n'en a plus reçoit
   une compétence classique au hasard.
+- **Seules les parties classées** (file classée entre deux comptes, au moins 4 plies, pas plus de 3 parties classées
+  contre le même adversaire en une heure) donnent une récompense de compétence : ni les parties amicales (invités,
+  salles, défis, Solo) ni un abandon à zéro coup n'en donnent, ce qui évite de « farmer » des compétences.
 - Récompense « aléatoire » : le gagnant reçoit une compétence tirée au hasard dans le pool global
-  (classiques qu'il n'a pas + uniques sans propriétaire) et le perdant en perd une au hasard.
+  (classiques qu'il n'a pas + uniques sans propriétaire) et le perdant en perd une au hasard parmi celles qu'il
+  possédait à la fin de la partie. Une récompense non réclamée ne peut pas voler une compétence acquise par le
+  perdant après la partie, ni une qu'il a perdue entre-temps ; elle expire au bout de 6 h.
+- Sécurité : une déconnexion (`/api/auth/logout`) ferme aussi la WebSocket ouverte avec cette session ; chaque
+  connexion a un quota de messages (rafale de 40, 20 par seconde, une recherche d'utilisateur ou une demande d'ami
+  coûte 4) et une file d'envoi bornée. Détails dans [docs/spec-v4.md](docs/spec-v4.md) (« Durcissement »).
 - Une compétence unique n'a qu'un seul propriétaire dans le monde (contrainte en base).

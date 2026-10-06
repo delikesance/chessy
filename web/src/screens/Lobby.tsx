@@ -80,8 +80,8 @@ export function Lobby({ state }: { state: AppState }) {
               </button>
               <p className="muted lb-note">
                 {playRanked
-                  ? "Adversaire de force proche ; l'Elo est en jeu."
-                  : "Sans enjeu : aucun Elo n'est modifié."}
+                  ? "Adversaire de force proche ; l'Elo et une compétence à gagner sont en jeu."
+                  : "Sans enjeu : ni Elo ni compétence à gagner."}
               </p>
               {account?.guest && (
                 <div className="lb-nudge">

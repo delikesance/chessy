@@ -19,7 +19,7 @@ fn sq(name: &str) -> u8 {
     parse_square(name).unwrap()
 }
 
-/// Two guests matched in the friendly queue, white and black getting the given
+/// Two accounts matched in the ranked queue, white and black getting the given
 /// decks and picking the given skills (unique ones come along on their own).
 /// Returns `(white, black)` with the opening messages thrown away.
 fn start_with(
@@ -28,8 +28,9 @@ fn start_with(
     decks: [&[SkillId]; 2],
     picks: [&[SkillId]; 2],
 ) -> (Client, Client) {
-    let mut a = guest(app);
-    let mut b = guest(app);
+    // Only rated games reward a skill: two accounts in the ranked queue.
+    let mut a = account(app, store, "alice");
+    let mut b = account(app, store, "bob");
     a.send(ClientMsg::QueueJoin { ranked: None });
     b.send(ClientMsg::QueueJoin { ranked: None });
     a.color = serde_json::from_value(a.next("deck_select")["you"].clone()).ok();

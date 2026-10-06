@@ -20,6 +20,7 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub use crate::games_store::GameKind;
+use crate::limits::{RateLimiter, Verdict};
 use crate::protocol::*;
 use crate::store::{reason_of, GameRecord, Store, StoreError};
 
@@ -61,6 +62,27 @@ pub struct HubConfig {
     /// Spectators of a game between people see it this much late (anti-cheat).
     /// Solo games are always shown live.
     pub spectator_delay: Duration,
+    /// Per-connection message quota: tokens refilled per second and burst size.
+    /// One message costs one token, the heavier ones `expensive_cost`.
+    pub msg_rate: f64,
+    pub msg_burst: u32,
+    pub expensive_cost: u32,
+    /// A connection that stays over quota for this many messages in a row is closed.
+    pub flood_disconnect_after: u32,
+    /// A connection with more than this many server messages waiting to be
+    /// written is a slow consumer and is closed (enforced in `ws`).
+    pub outbound_queue_cap: usize,
+    /// A single socket write that takes longer than this closes the connection.
+    pub write_timeout: Duration,
+    /// Most players waiting in the ranked queue, in the casual queue and in
+    /// rooms (each); the ranked matching is quadratic in its queue.
+    pub lobby_cap: usize,
+    /// How long a won reward can wait to be claimed.
+    pub reward_ttl: Duration,
+    /// Rated games allowed between the same two accounts within
+    /// `rated_pair_window`; further games between them are unrated.
+    pub rated_pair_max: u32,
+    pub rated_pair_window: Duration,
 }
 
 impl Default for HubConfig {
@@ -82,6 +104,16 @@ impl Default for HubConfig {
             bot_draw_min_plies: crate::bot::DRAW_MIN_PLIES,
             bot_draw_window: crate::bot::DRAW_WINDOW,
             spectator_delay: Duration::from_secs(30),
+            msg_rate: 20.0,
+            msg_burst: 40,
+            expensive_cost: 4,
+            flood_disconnect_after: 100,
+            outbound_queue_cap: 1000,
+            write_timeout: Duration::from_secs(10),
+            lobby_cap: 1000,
+            reward_ttl: Duration::from_secs(6 * 3600),
+            rated_pair_max: 3,
+            rated_pair_window: Duration::from_secs(3600),
         }
     }
 }
@@ -133,6 +165,9 @@ pub enum Timer {
 struct Conn {
     id: u64,
     tx: UnboundedSender<ServerMsg>,
+    /// The session token this connection authenticated with.
+    token: String,
+    limiter: RateLimiter,
 }
 
 enum Phase {
@@ -217,6 +252,10 @@ impl Session {
 
 struct PendingReward {
     loser: PlayerId,
+    /// What the loser owned when the game ended: the only skills the winner
+    /// may take (and only those the loser still owns when they claim).
+    loser_deck: Vec<SkillId>,
+    created: Instant,
 }
 
 struct QueueEntry {
@@ -353,15 +392,21 @@ impl Hub {
         };
         self.next_conn += 1;
         let conn_id = self.next_conn;
-        if let Some(old) = self.conns.insert(id.clone(), Conn { id: conn_id, tx }) {
+        let conn = Conn {
+            id: conn_id,
+            tx,
+            token: token.clone(),
+            limiter: RateLimiter::new(self.config.msg_rate, self.config.msg_burst, Instant::now()),
+        };
+        if let Some(old) = self.conns.insert(id.clone(), conn) {
             let _ = old.tx.send(ServerMsg::error(
                 "replaced",
                 "this account connected from somewhere else",
             ));
         }
         let _ = self.store.touch_last_seen(&id);
-        let pending_reward = match self.rewards.get(&id) {
-            Some(r) => self.offer_for(&id, &r.loser).ok(),
+        let pending_reward = match self.live_reward(&id) {
+            Some(r) => self.offer_for(&id, &r.loser, &r.loser_deck).ok(),
             None => None,
         };
         let account = self
@@ -387,6 +432,52 @@ impl Hub {
 
     pub fn is_current(&self, player: &str, conn_id: u64) -> bool {
         self.conns.get(player).is_some_and(|c| c.id == conn_id)
+    }
+
+    pub fn is_connected(&self, player: &str) -> bool {
+        self.conns.contains_key(player)
+    }
+
+    /// Charges one incoming message to the connection's quota. Returns false
+    /// when it must be ignored: stale connection, or over quota (the sender
+    /// is told once per streak; a flood closes the connection).
+    pub fn admit(&mut self, player: &str, conn_id: u64, cost: u32) -> bool {
+        let flood_after = self.config.flood_disconnect_after;
+        let Some(conn) = self.conns.get_mut(player).filter(|c| c.id == conn_id) else {
+            return false;
+        };
+        match conn.limiter.take(cost, Instant::now(), flood_after) {
+            Verdict::Allow => true,
+            Verdict::Drop { first } => {
+                if first {
+                    self.fail(player, "rate_limited", "you are sending messages too fast");
+                }
+                false
+            }
+            Verdict::Disconnect => {
+                self.fail(player, "flooded", "too many messages: disconnected");
+                self.disconnect(player, conn_id);
+                false
+            }
+        }
+    }
+
+    /// A session was ended (logout): the connection that authenticated with
+    /// it is told and dropped like any other disconnect.
+    pub fn revoke_session(&mut self, token: &str) {
+        let found = self
+            .conns
+            .iter()
+            .find(|(_, c)| c.token == token)
+            .map(|(player, c)| (player.clone(), c.id));
+        if let Some((player, conn_id)) = found {
+            self.fail(
+                &player,
+                "session_revoked",
+                "this session was ended: sign in again",
+            );
+            self.disconnect(&player, conn_id);
+        }
     }
 
     /// Brings a (re)connected player up to date with wherever they were.
@@ -605,6 +696,9 @@ impl Hub {
         };
         match account {
             Some(row) if ranked.unwrap_or(true) => {
+                if self.ranked_queue.len() >= self.config.lobby_cap {
+                    return self.fail(player, "queue_full", "the ranked queue is full: try again");
+                }
                 self.ranked_queue.push(QueueEntry {
                     player: player.to_string(),
                     elo: row.elo,
@@ -634,10 +728,18 @@ impl Hub {
     /// (ties go to whoever has waited longest).
     fn match_ranked(&mut self) {
         let now = Instant::now();
+        // Pairs that already played their share of rated games against each
+        // other: left waiting for someone else (see `pair_capped`).
+        let mut refused: Vec<(PlayerId, PlayerId)> = Vec::new();
         loop {
             let mut best: Option<(usize, usize, i32)> = None;
             for (i, a) in self.ranked_queue.iter().enumerate() {
                 for (j, b) in self.ranked_queue.iter().enumerate().skip(i + 1) {
+                    if refused.iter().any(|(x, y)| {
+                        (x == &a.player && y == &b.player) || (x == &b.player && y == &a.player)
+                    }) {
+                        continue;
+                    }
                     let gap = (a.elo - b.elo).abs();
                     let wait = now.saturating_duration_since(a.since.min(b.since));
                     if gap <= self.config.ranked_range(wait) && best.is_none_or(|(_, _, g)| gap < g)
@@ -647,6 +749,11 @@ impl Hub {
                 }
             }
             let Some((i, j, _)) = best else { return };
+            let (pa, pb) = (&self.ranked_queue[i].player, &self.ranked_queue[j].player);
+            if self.pair_capped(pa, pb) {
+                refused.push((pa.clone(), pb.clone()));
+                continue;
+            }
             let second = self.ranked_queue.remove(j);
             let first = self.ranked_queue.remove(i);
             self.create_game(first.player, second.player, true, GameKind::Duel);
@@ -665,6 +772,9 @@ impl Hub {
     pub fn create_room(&mut self, player: &str) {
         if !self.enter_lobby(player) {
             return;
+        }
+        if self.rooms.len() >= self.config.lobby_cap {
+            return self.fail(player, "rooms_full", "too many open rooms: try again");
         }
         let mut code = room_code();
         while self.rooms.contains_key(&code) {
@@ -756,6 +866,9 @@ impl Hub {
         }
         let pair = [white.clone(), black.clone()];
         let humans: Vec<&PlayerId> = pair.iter().filter(|p| !crate::bot::is_bot_id(p)).collect();
+        // Rematches and queue pairings between the same two accounts stop
+        // counting for Elo (and rewards) once they pile up.
+        let rated = rated && !(humans.len() == 2 && self.pair_capped(&white, &black));
         for player in &humans {
             self.rewards.remove(*player);
             self.leave_lobby_silently(player);
@@ -1300,13 +1413,17 @@ impl Hub {
             // friendly games and Solo would otherwise be farmed.
             let reward = if !solo && change.is_some() && Some(color) == winner {
                 let loser = &session.players[color.opposite().index()];
+                let loser_deck = self.deck_of(loser).unwrap_or_default();
+                let offer = self.offer_for(player, loser, &loser_deck).ok();
                 self.rewards.insert(
                     player.clone(),
                     PendingReward {
                         loser: loser.clone(),
+                        loser_deck,
+                        created: Instant::now(),
                     },
                 );
-                self.offer_for(player, loser).ok()
+                offer
             } else {
                 None
             };
@@ -1353,12 +1470,41 @@ impl Hub {
         }
     }
 
-    fn offer_for(&self, winner: &str, loser: &str) -> Result<RewardOffer, StoreError> {
+    /// Whether `a` and `b` have already played `rated_pair_max` rated games
+    /// against each other within `rated_pair_window` (anti Elo boosting).
+    /// A store error counts as not capped: it must not block play.
+    fn pair_capped(&self, a: &str, b: &str) -> bool {
+        let window = self.config.rated_pair_window.as_secs();
+        match self.store.rated_games_between(a, b, window) {
+            Ok(n) => n >= self.config.rated_pair_max,
+            Err(e) => {
+                tracing::error!("pair cap lookup failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// The player's unclaimed reward, if it has not expired.
+    fn live_reward(&self, player: &str) -> Option<&PendingReward> {
+        self.rewards
+            .get(player)
+            .filter(|r| r.created.elapsed() < self.config.reward_ttl)
+    }
+
+    /// What the winner may take: skills the loser owned when the game ended
+    /// *and* still owns, that the winner does not have.
+    fn offer_for(
+        &self,
+        winner: &str,
+        loser: &str,
+        snapshot: &[SkillId],
+    ) -> Result<RewardOffer, StoreError> {
         let deck = self.deck_of(winner)?;
-        let steal_options = self
-            .deck_of(loser)?
-            .into_iter()
-            .filter(|s| !deck.contains(s))
+        let loser_now = self.deck_of(loser)?;
+        let steal_options = snapshot
+            .iter()
+            .copied()
+            .filter(|s| loser_now.contains(s) && !deck.contains(s))
             .collect();
         Ok(RewardOffer {
             deck_full: deck.len() >= MAX_DECK,
@@ -1371,7 +1517,10 @@ impl Hub {
         let Some(pending) = self.rewards.remove(player) else {
             return self.fail(player, "no_reward", "you have no reward to claim");
         };
-        match self.resolve_reward(player, &pending.loser, choice) {
+        if pending.created.elapsed() >= self.config.reward_ttl {
+            return self.fail(player, "no_reward", "that reward has expired");
+        }
+        match self.resolve_reward(player, &pending.loser, &pending.loser_deck, choice) {
             Ok(()) => {}
             Err(msg) => {
                 // Let the player try again with a corrected choice.
@@ -1385,11 +1534,19 @@ impl Hub {
         &mut self,
         winner: &str,
         loser: &str,
+        snapshot: &[SkillId],
         choice: RewardChoice,
     ) -> Result<(), &'static str> {
         let db = |_: StoreError| "internal error";
         let winner_deck = self.deck_of(winner).map_err(db)?;
-        let loser_deck = self.deck_of(loser).map_err(db)?;
+        // Only what the loser had at the end of the game and still has now
+        // (they may have won skills elsewhere since, or lost some).
+        let loser_deck: Vec<SkillId> = self
+            .deck_of(loser)
+            .map_err(db)?
+            .into_iter()
+            .filter(|s| snapshot.contains(s))
+            .collect();
 
         let (gain, loser_loses, replace) = match choice {
             RewardChoice::Skip => {
@@ -1405,7 +1562,7 @@ impl Hub {
             }
             RewardChoice::Steal { skill, replace } => {
                 if !loser_deck.contains(&skill) {
-                    return Err("your opponent does not have that skill");
+                    return Err("that skill is not available to take any more");
                 }
                 if winner_deck.contains(&skill) {
                     return Err("you already have that skill");

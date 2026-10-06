@@ -205,6 +205,8 @@ async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> ApiResult<St
     authenticate(&app, &headers)?;
     let token = bearer(&headers).ok_or_else(ApiError::unauthorized)?;
     app.store().delete_session(token)?;
+    // An open WebSocket that logged in with this session must not outlive it.
+    app.session_revoked(token);
     Ok(StatusCode::NO_CONTENT)
 }
 

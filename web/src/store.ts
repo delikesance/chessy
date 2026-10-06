@@ -134,6 +134,10 @@ const ERROR_TEXT: Record<string, string> = {
   already_in_game: "Vous êtes déjà dans une partie.",
   invalid_deck: "Sélection de compétences invalide.",
   replaced: "Ce compte s'est connecté depuis un autre onglet.",
+  session_revoked: "Votre session a pris fin : vous êtes repassé en invité.",
+  flooded: "Connexion coupée : trop de messages envoyés.",
+  queue_full: "La file classée est pleine, réessayez dans un instant.",
+  rooms_full: "Trop de salles ouvertes, réessayez dans un instant.",
   account_required: "Un compte est nécessaire pour cette action.",
   spectate_full: "Cette partie a atteint son maximum de spectateurs.",
   no_such_game: "Cette partie n'existe pas ou est terminée.",
@@ -275,6 +279,11 @@ export class Store {
   async logout() {
     const token = readToken();
     writeToken(null);
+    // Détache la socket tout de suite : le serveur la ferme à la déconnexion
+    // (`session_revoked`), ce message-là ne doit pas déclencher une seconde reconnexion.
+    const old = this.socket;
+    this.socket = null;
+    old?.close();
     if (token) {
       try {
         await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
@@ -489,6 +498,16 @@ export class Store {
           break;
         }
         this.clearSoloPending();
+        if (msg.code === "session_revoked") {
+          // Session terminée ailleurs (déconnexion depuis un autre onglet ou appareil) :
+          // on oublie le jeton et on repart en invité, une seule fois (un invité n'a rien à révoquer).
+          this.notify(ERROR_TEXT.session_revoked);
+          if (readToken()) {
+            writeToken(null);
+            this.reconnect();
+          }
+          break;
+        }
         if (msg.code === "replaced") this.set({ connection: "replaced" });
         if (msg.code === "illegal_action" || msg.code === "not_your_turn") sfx.play("illegal");
         this.notify(ERROR_TEXT[msg.code] ?? msg.message);
