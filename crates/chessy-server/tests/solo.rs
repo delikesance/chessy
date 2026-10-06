@@ -761,3 +761,37 @@ async fn many_solo_games_at_once() {
         assert!(s["ply"].as_u64().unwrap() >= 2);
     }
 }
+
+// ---- backing out of deck selection ---------------------------------------------
+
+#[tokio::test]
+async fn leaving_deck_selection_against_the_bot_returns_to_the_lobby() {
+    let (app, _) = new_app(cfg());
+    let mut g = guest(&app);
+    solo(&mut g, 1000, "white");
+    g.send(ClientMsg::LeaveDeckSelect);
+    assert_eq!(g.next("game_cancelled")["reason"], "you_left");
+    assert_eq!(g.last("lobby")["status"]["type"], "idle");
+    // The slot is free: another solo game can start straight away.
+    solo(&mut g, 1000, "white");
+}
+
+#[tokio::test]
+async fn leaving_deck_selection_puts_the_opponent_back_in_the_queue() {
+    let (app, _) = new_app(cfg());
+    let mut a = guest(&app);
+    let mut b = guest(&app);
+    a.send(ClientMsg::QueueJoin { ranked: None });
+    b.send(ClientMsg::QueueJoin { ranked: None });
+    a.next("deck_select");
+    b.next("deck_select");
+    a.send(ClientMsg::LeaveDeckSelect);
+    assert_eq!(a.next("game_cancelled")["reason"], "you_left");
+    assert_eq!(b.next("game_cancelled")["reason"], "opponent_left_requeued");
+    assert_eq!(b.last("lobby")["status"]["type"], "queued");
+    // A newcomer is matched with the waiting player.
+    let mut c = guest(&app);
+    c.send(ClientMsg::QueueJoin { ranked: None });
+    c.next("deck_select");
+    b.next("deck_select");
+}

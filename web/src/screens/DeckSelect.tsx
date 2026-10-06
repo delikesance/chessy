@@ -124,6 +124,9 @@ export function DeckSelect({ info }: { info: DeckSelectInfo }) {
       )}
 
       <footer className="dk-foot">
+        <button type="button" className="btn ghost" onClick={() => store.send({ type: "leave_deck_select" })}>
+          {info.opponent.bot ? "Annuler" : "Quitter"}
+        </button>
         {info.submitted ? (
           <p className="dk-wait" role="status">
             Sélection envoyée. En attente de l'adversaire…

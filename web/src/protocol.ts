@@ -349,6 +349,7 @@ export type ClientMsg =
   | { type: "create_room" }
   | { type: "join_room"; code: string }
   | { type: "leave_lobby" }
+  | { type: "leave_deck_select" }
   | { type: "select_deck"; skills: SkillId[] }
   | { type: "action"; action: Action }
   | { type: "resign" }

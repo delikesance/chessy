@@ -446,7 +446,11 @@ export class Store {
         this.clearSoloPending();
         this.set({ game: null, deckSelect: null, over: null, rematch: "none" });
         sfx.play("notice");
-        this.notify("La partie a été annulée.");
+        if (msg.reason === "opponent_left_requeued") {
+          this.notify("Votre adversaire est parti : nouvelle recherche en cours…");
+        } else if (msg.reason !== "you_left") {
+          this.notify("La partie a été annulée.");
+        }
         break;
       case "error":
         this.clearSoloPending();

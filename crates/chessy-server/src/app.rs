@@ -173,6 +173,7 @@ impl App {
                 ClientMsg::CreateRoom => hub.create_room(player),
                 ClientMsg::JoinRoom { code } => hub.join_room(player, &code),
                 ClientMsg::LeaveLobby => hub.leave_lobby(player),
+                ClientMsg::LeaveDeckSelect => hub.leave_deck_select(player),
                 ClientMsg::SelectDeck { skills } => hub.select_deck(player, skills),
                 ClientMsg::Action { action } => hub.action(player, action),
                 ClientMsg::Resign => hub.resign(player),

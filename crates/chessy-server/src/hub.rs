@@ -910,6 +910,100 @@ impl Hub {
         self.schedule_bot(game_id);
     }
 
+    /// A player backs out of deck selection. The game is dropped for them; a
+    /// matchmaking opponent is put back in the queue they came from, anyone
+    /// else (room, challenge, rematch) just sees the game cancelled.
+    pub fn leave_deck_select(&mut self, player: &str) {
+        let Some(game_id) = self.player_game.get(player).cloned() else {
+            return;
+        };
+        let Some(session) = self.games.get(&game_id) else {
+            return;
+        };
+        if !matches!(session.phase, Phase::DeckSelect { .. }) {
+            return self.fail(player, "not_in_deck_select", "the game has already started");
+        }
+        let requeue = session.solo.is_none() && session.kind == GameKind::Duel;
+        let rated = session.rated;
+        let other = session
+            .players
+            .iter()
+            .find(|p| p.as_str() != player)
+            .cloned();
+        self.games.remove(&game_id);
+        self.player_game.remove(player);
+        self.send(
+            player,
+            ServerMsg::GameCancelled {
+                reason: "you_left".to_string(),
+            },
+        );
+        self.send(
+            player,
+            ServerMsg::Lobby {
+                status: LobbyStatus::Idle,
+            },
+        );
+        if let Some(other) = other.filter(|o| !crate::bot::is_bot_id(o)) {
+            self.player_game.remove(&other);
+            self.send(
+                &other,
+                ServerMsg::GameCancelled {
+                    reason: if requeue {
+                        "opponent_left_requeued"
+                    } else {
+                        "opponent_left"
+                    }
+                    .to_string(),
+                },
+            );
+            if requeue {
+                self.requeue(&other, rated);
+            } else {
+                self.send(
+                    &other,
+                    ServerMsg::Lobby {
+                        status: LobbyStatus::Idle,
+                    },
+                );
+            }
+            self.notify_presence(&other);
+        }
+        self.notify_presence(player);
+    }
+
+    /// Puts a player back in the queue they were matched from (at the front
+    /// of the casual one, they have already waited).
+    fn requeue(&mut self, player: &str, rated: bool) {
+        let elo = match self.store.player_row(player) {
+            Ok(Some(row)) if rated && row.username.is_some() => Some(row.elo),
+            _ => None,
+        };
+        match elo {
+            Some(elo) => {
+                self.ranked_queue.push(QueueEntry {
+                    player: player.to_string(),
+                    elo,
+                    since: Instant::now(),
+                });
+                self.match_ranked();
+                self.ensure_sweep();
+            }
+            None => match self.casual_queue.pop_front() {
+                Some(other) => self.create_game(other, player.to_string(), false),
+                None => self.casual_queue.push_front(player.to_string()),
+            },
+        }
+        if !self.player_game.contains_key(player) {
+            self.send(
+                player,
+                ServerMsg::Lobby {
+                    status: self.lobby_status(player),
+                },
+            );
+        }
+    }
+
     fn cancel_session(&mut self, game_id: &str, reason: &str) {
         let Some(session) = self.games.remove(game_id) else {
             return;

@@ -27,6 +27,9 @@ pub enum ClientMsg {
         code: String,
     },
     LeaveLobby,
+    /// Walks out of deck selection (back to the lobby). Against the bot the game is dropped;
+    /// against a queue opponent they go back to waiting in the queue; otherwise the game is cancelled.
+    LeaveDeckSelect,
     /// Classic skills to bring (at most 3); unique skills in the deck come along for free.
     SelectDeck {
         skills: Vec<SkillId>,
