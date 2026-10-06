@@ -38,3 +38,68 @@ button.skc:disabled { opacity: .5; cursor: default; }
 .slot-name { font-size: 13px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
 .slot .eyebrow { font-size: 10px; letter-spacing: .08em; }
 .slot.empty { border: 1px dashed var(--line-3); border-top: 1px dashed var(--line-3); background: transparent; justify-content: center; min-height: 148px; color: var(--faint); font-size: 12.5px; }
+
+/* ---- Compétences uniques : look « foil » (liseré holographique, reflet qui balaie, icône lumineuse) ---- */
+@property --foil-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes foil-spin { to { --foil-a: 360deg; } }
+@keyframes foil-sweep { 0%, 58% { background-position: 170% 0; } 100% { background-position: -70% 0; } }
+@keyframes foil-glow {
+  0%, 100% { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--fam) 45%, transparent)); }
+  50% { filter: drop-shadow(0 0 9px color-mix(in srgb, var(--fam) 80%, transparent)); }
+}
+
+.foil {
+  --foil-gold: #f3d58b; --foil-ice: #9ec6ff; --foil-vio: #c9aefc;
+  position: relative; isolation: isolate;
+  transition: background .15s, box-shadow .2s;
+}
+/* Double classe : l'emporte sur les fonds et bordures de .skc, .co-card, .gm-skill et .slot. */
+.foil.foil {
+  border-color: transparent;
+  background:
+    radial-gradient(120% 100% at 0% 0%, rgba(243, 213, 139, .12), transparent 55%),
+    linear-gradient(135deg, rgba(158, 198, 255, .05), rgba(201, 174, 252, .08)),
+    var(--surface);
+  box-shadow: 0 0 22px -12px rgba(243, 213, 139, .45);
+}
+/* Liseré conique qui tourne lentement. */
+.foil::before {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none; z-index: 2;
+  background: conic-gradient(from var(--foil-a), var(--foil-gold), var(--foil-ice), var(--foil-vio), var(--foil-gold), #fff4d2, var(--foil-ice), var(--foil-gold));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: foil-spin 8s linear infinite;
+}
+/* Reflet lumineux qui traverse la carte par intermittence. */
+.foil::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 2;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, .07) 47%, rgba(243, 213, 139, .16) 52%, transparent 62%);
+  background-size: 260% 100%; background-position: 170% 0;
+  animation: foil-sweep 6.5s ease-in-out infinite;
+}
+button.foil:hover:not(:disabled) { box-shadow: 0 0 0 1px rgba(243, 213, 139, .28), 0 12px 34px -10px rgba(243, 213, 139, .42); }
+.skc.foil, .gm-skill.foil { border-left-color: var(--fam); }
+.slot.foil { border-top-color: var(--fam); }
+.skc.foil.on { box-shadow: 0 0 0 1px var(--text) inset, 0 0 26px -10px rgba(243, 213, 139, .5); }
+.skc.foil.locked { border-style: solid; background: radial-gradient(120% 100% at 0% 0%, rgba(243, 213, 139, .1), transparent 55%), transparent; }
+.skc.foil::before { inset: -1px -1px -1px -3px; }
+
+/* Icône : halo doré et lueur de famille qui respire. */
+.foil :is(.skc-art, .co-art, .co-detail-art, .slot-art, .gm-skill-art) {
+  position: relative; border-color: rgba(243, 213, 139, .3);
+  background: radial-gradient(circle at 50% 42%, rgba(243, 213, 139, .2), transparent 72%), var(--sunken);
+}
+.foil .skill-art { animation: foil-glow 3.8s ease-in-out infinite; }
+.foil-tag { color: #f3d58b; border-color: rgba(243, 213, 139, .45); background: rgba(243, 213, 139, .08); }
+
+/* Badge couronne. */
+.foil-badge {
+  position: absolute; top: -7px; left: -7px; z-index: 3; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  color: #2a2110; background: linear-gradient(135deg, #fff1c4, #e9bd5c 55%, #c99a3e);
+  box-shadow: 0 0 0 2px var(--bg), 0 2px 10px rgba(243, 213, 139, .45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foil::before, .foil::after, .foil .skill-art { animation: none; }
+  .foil::after { display: none; }
+}

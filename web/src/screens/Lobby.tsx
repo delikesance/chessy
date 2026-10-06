@@ -4,6 +4,7 @@ import { hrefFor } from "../router";
 import { skillInfo } from "../skills";
 import { store, type AppState } from "../store";
 import { SkillArt } from "../ui/SkillArt";
+import { UniqueBadge } from "../ui/UniqueBadge";
 import { SoloCard } from "./SoloCard";
 import "./lobby.css";
 
@@ -191,9 +192,10 @@ export function Lobby({ state }: { state: AppState }) {
               }
               const info = skillInfo(id);
               return (
-                <li key={id} className="slot" style={{ "--fam": `var(--fam-${info.family})` } as CSSProperties} title={info.description}>
+                <li key={id} className={`slot${info.unique ? " foil" : ""}`} style={{ "--fam": `var(--fam-${info.family})` } as CSSProperties} title={info.description}>
                   <span className="slot-art">
                     <SkillArt id={id} size={54} />
+                    {info.unique && <UniqueBadge />}
                   </span>
                   <span className="slot-name">{info.name}</span>
                   <span className="eyebrow">{info.unique ? "Unique" : FAMILY_LABEL[info.family]}</span>

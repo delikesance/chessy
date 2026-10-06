@@ -3,6 +3,7 @@ import type { RewardChoice, RewardOffer, SkillId } from "../protocol";
 import { skillInfo } from "../skills";
 import { store } from "../store";
 import { SkillArt } from "../ui/SkillArt";
+import { UniqueBadge } from "../ui/UniqueBadge";
 import { SkillCard } from "./SkillCard";
 import "./reward.css";
 
@@ -90,12 +91,13 @@ export function RewardModal({ offer }: { offer: RewardOffer }) {
                     type="button"
                     role="radio"
                     aria-checked={on}
-                    className={`slot rw-slot${on ? " on" : ""}`}
+                    className={`slot rw-slot${on ? " on" : ""}${info.unique ? " foil" : ""}`}
                     style={{ "--fam": `var(--fam-${info.family})` } as CSSProperties}
                     onClick={() => setReplace(skill)}
                   >
                     <span className="slot-art">
                       <SkillArt id={skill} size={46} />
+                      {info.unique && <UniqueBadge />}
                     </span>
                     <span className="slot-name">{info.name}</span>
                     <span className="skc-ring rw-ring" aria-hidden="true" />

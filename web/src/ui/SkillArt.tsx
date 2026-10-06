@@ -117,8 +117,9 @@ export function SkillSprite() {
       <symbol id="sk-evolve" viewBox="0 0 120 120">
         <use href="#p-pawn" transform="translate(6 56) scale(.8)" />
         <use href="#p-queen" transform="translate(52 6) scale(1.05)" />
-        <path d="M32 50q10-6 16-18" />
-        <path d="M36 30l12 2-3 12" />
+        {/* Flèche droite à 45 degrés, tête symétrique. */}
+        <path d="M32 54L56 30" />
+        <path d="M54.1 40.8L56 30l-10.8 1.9" />
         <path d="M54 106h56" />
       </symbol>
 
@@ -136,10 +137,15 @@ export function SkillSprite() {
       </symbol>
 
       <symbol id="sk-control" viewBox="0 0 120 120">
-        <path d="M30 12h60M60 12v12" />
-        <path d="M34 12l20 40M86 12L66 52M60 24v28" />
-        <use href="#p-pawn" transform="translate(30 50)" />
-        <path d="M10 108h100" />
+        {/* Main + barre de manipulation, fils tendus vers un pion-marionnette aux bras levés. */}
+        <path d="M60 3v7" />
+        <rect x="22" y="10" width="76" height="9" rx="4.5" />
+        <path d="M30 19L34 65M90 19L86 65M60 19v38" strokeWidth="2" />
+        <use href="#p-pawn" transform="translate(31.5 52) scale(.95)" />
+        <path d="M52 86L37 70M68 86l15-16" />
+        <circle cx="34" cy="66" r="3" fill="currentColor" />
+        <circle cx="86" cy="66" r="3" fill="currentColor" />
+        <path d="M40 112h40" strokeDasharray="2 7" />
       </symbol>
 
       <symbol id="sk-morph" viewBox="0 0 120 120">
@@ -177,9 +183,18 @@ export function SkillSprite() {
       </symbol>
 
       <symbol id="sk-trap" viewBox="0 0 120 120">
-        <rect x="18" y="18" width="84" height="84" rx="8" />
-        <path d="M18 54l10 14 10-14 10 14 10-14 10 14 10-14 10 14 10-14 4 6" />
-        <path d="M18 78l10-12 10 12 10-12 10 12 10-12 10 12 10-12 14 18" />
+        {/* Piège à mâchoires (ours) : deux mâchoires dentées se referment sur un pion, plaque de détente au sol. */}
+        <g transform="rotate(-9 20 98)">
+          <path d="M20 98 A40 60 0 0 1 60 38 L60.0 48.0 L56.7 61.5 L50.1 50.4 L50.5 65.0 L41.2 57.5 L45.2 71.8 L34.1 68.6 L41.3 81.2 L29.6 82.5 L39.3 92.2 L28.0 98.0 z" />
+        </g>
+        <g transform="translate(120 0) scale(-1 1)">
+          <g transform="rotate(-9 20 98)">
+            <path d="M20 98 A40 60 0 0 1 60 38 L60.0 48.0 L56.7 61.5 L50.1 50.4 L50.5 65.0 L41.2 57.5 L45.2 71.8 L34.1 68.6 L41.3 81.2 L29.6 82.5 L39.3 92.2 L28.0 98.0 z" />
+          </g>
+        </g>
+        <use href="#p-pawn" transform="translate(45 68) scale(.5)" />
+        <rect x="8" y="98" width="104" height="10" rx="3" />
+        <path d="M112 103h5" />
       </symbol>
 
       <symbol id="sk-bench" viewBox="0 0 120 120">
@@ -203,9 +218,12 @@ export function SkillSprite() {
       </symbol>
 
       <symbol id="sk-queensac" viewBox="0 0 120 120">
-        <use href="#p-queen" transform="translate(16 12) scale(1.45)" />
-        <path d="M12 106h96" />
-        <path d="M52 40l-8 14 10 8-6 14" />
+        {/* La dame est offerte sur l'autel : une épée plantée la transperce. */}
+        <use href="#p-queen" transform="translate(27 34) scale(1.1)" />
+        <path d="M18 96h84M24 96v14h72V96" />
+        <path d="M56 22l4 52 4-52z" fill="currentColor" />
+        <path d="M46 18h28M60 18V8" />
+        <circle cx="60" cy="5" r="2.6" />
       </symbol>
 
       <symbol id="sk-temporal" viewBox="0 0 120 120">

@@ -3,6 +3,8 @@ import { FAMILIES, FAMILY_LABEL, familyVar } from "../catalog";
 import type { CatalogEntry } from "../catalog";
 import { useAppState } from "../store";
 import { SkillArt } from "../ui/SkillArt";
+import { SkillPreview } from "../ui/skillPreview";
+import { UniqueBadge } from "../ui/UniqueBadge";
 import { CLASSIC_NOTE, filterCatalog, RULES, UNIQUE_NOTE } from "./collectionData";
 import type { FamilyFilter, KindFilter } from "./collectionData";
 import "./collection.css";
@@ -18,6 +20,7 @@ export function Collection() {
   const [family, setFamily] = useState<FamilyFilter>("all");
   const [kind, setKind] = useState<KindFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
 
   const list = useMemo(() => filterCatalog(family, kind), [family, kind]);
@@ -80,16 +83,21 @@ export function Collection() {
               <li key={c.id}>
                 <button
                   type="button"
-                  className={`co-card${selected?.id === c.id ? " on" : ""}`}
+                  className={`co-card${selected?.id === c.id ? " on" : ""}${c.unique ? " foil" : ""}`}
                   style={{ ["--fam" as string]: familyVar(c.family) }}
                   aria-pressed={selected?.id === c.id}
+                  onMouseEnter={() => setHoverId(c.id)}
+                  onMouseLeave={() => setHoverId((h) => (h === c.id ? null : h))}
+                  onFocus={() => setHoverId(c.id)}
+                  onBlur={() => setHoverId((h) => (h === c.id ? null : h))}
                   onClick={() => {
                     setSelectedId(c.id);
                     panelRef.current?.focus({ preventScroll: true });
                   }}
                 >
                   <span className="co-art">
-                    <SkillArt id={c.id} size={76} />
+                    {hoverId === c.id ? <SkillPreview id={c.id} compact /> : <SkillArt id={c.id} size={76} />}
+                    {c.unique && <UniqueBadge />}
                   </span>
                   <span className="co-card-body">
                     <span className="co-name">{c.name}</span>
@@ -97,7 +105,7 @@ export function Collection() {
                     <span className="co-desc">{c.description}</span>
                   </span>
                   <span className="co-marks">
-                    {c.unique && <span className="tag">Unique</span>}
+                    {c.unique && <span className="tag foil-tag">Unique</span>}
                     {!c.implemented && <span className="tag co-soon">Bientôt jouable</span>}
                     {inDeck.has(c.id) && <span className="tag co-deck">Dans votre deck</span>}
                   </span>
@@ -131,16 +139,19 @@ function Detail({ entry: c, owned, onClose }: { entry: CatalogEntry; owned: bool
       <button type="button" className="co-close btn sm ghost" onClick={onClose}>
         Fermer
       </button>
-      <div className="co-detail-art">
-        <SkillArt id={c.id} size={150} />
+      <div className={`co-detail-art${c.unique ? " foil" : ""}`}>
+        <SkillArt id={c.id} size={88} />
+        {c.unique && <UniqueBadge />}
       </div>
       <p className="eyebrow co-detail-fam">{FAMILY_LABEL[c.family]}</p>
       <h2 className="co-detail-name">{c.name}</h2>
       <p className="co-marks">
-        {c.unique ? <span className="tag">Unique</span> : <span className="tag">Classique</span>}
+        {c.unique ? <span className="tag foil-tag">Unique</span> : <span className="tag">Classique</span>}
         {!c.implemented && <span className="tag co-soon">Bientôt jouable</span>}
         {owned && <span className="tag co-deck">Dans votre deck</span>}
       </p>
+      <h3 className="co-sub">Aperçu</h3>
+      <SkillPreview id={c.id} caption />
       <h3 className="co-sub">Règles</h3>
       <p className="co-rules">{RULES[c.id] ?? c.description}</p>
       <p className="co-note muted">{c.unique ? UNIQUE_NOTE : CLASSIC_NOTE}</p>

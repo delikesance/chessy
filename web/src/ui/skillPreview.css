@@ -1,0 +1,91 @@
+/* Aperçu animé des compétences (mini-échiquier 5x5 en SVG). Les images clés sont générées :
+   chaque animation existe en trois fenêtres (a 12-34 %, c 28-50 %, b 46-68 %) d'une boucle de 5,2 s. */
+.sv-fig { margin: 0; display: grid; gap: 10px; }
+.sv-fig figcaption { font-size: 13px; line-height: 1.45; color: var(--muted); }
+.sv-pair { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.sv-pair-arrow { color: var(--faint); font-size: 18px; }
+.sv-pair-cap { display: block; text-align: center; margin-top: 4px; font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.sv { display: block; width: 100%; height: auto; aspect-ratio: 1; border-radius: 10px; border: 1px solid var(--line-2); background: var(--sunken); overflow: hidden; }
+.sv-sq0 { fill: #1d2025; }
+.sv-sq1 { fill: #272b32; }
+.sv-pc { stroke-width: 4.5; stroke-linejoin: round; stroke-linecap: round; }
+.sv-w { fill: #e9ebef; stroke: #0e0f12; }
+.sv-b { fill: #2b2f37; stroke: #cfd4dc; }
+.sv-n { fill: color-mix(in srgb, var(--fam, #eec06a) 60%, #0e0f12); stroke: var(--fam, #eec06a); }
+.sv-gl { stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.sv-it { animation-duration: 5.2s; animation-iteration-count: infinite; animation-timing-function: ease-in-out; animation-fill-mode: both; transform-box: fill-box; transform-origin: center; }
+.sv-loop { animation: sv-loop 5.2s linear infinite; }
+.sv-pulse { animation-duration: 2.6s; }
+.sv-spin { animation-timing-function: linear; }
+.sv-rise-a, .sv-rise-b, .sv-rise-c { transform-origin: 50% 100%; }
+
+.sv-mv-a { animation-name: sv-mv-a; }
+.sv-mv-c { animation-name: sv-mv-c; }
+.sv-mv-b { animation-name: sv-mv-b; }
+.sv-hit-a { animation-name: sv-hit-a; }
+.sv-hit-c { animation-name: sv-hit-c; }
+.sv-hit-b { animation-name: sv-hit-b; }
+.sv-out-a { animation-name: sv-out-a; }
+.sv-out-c { animation-name: sv-out-c; }
+.sv-out-b { animation-name: sv-out-b; }
+.sv-in-a { animation-name: sv-in-a; }
+.sv-in-c { animation-name: sv-in-c; }
+.sv-in-b { animation-name: sv-in-b; }
+.sv-ghost-a { animation-name: sv-ghost-a; }
+.sv-ghost-c { animation-name: sv-ghost-c; }
+.sv-ghost-b { animation-name: sv-ghost-b; }
+.sv-pop-a { animation-name: sv-pop-a; }
+.sv-pop-c { animation-name: sv-pop-c; }
+.sv-pop-b { animation-name: sv-pop-b; }
+.sv-rise-a { animation-name: sv-rise-a; }
+.sv-rise-c { animation-name: sv-rise-c; }
+.sv-rise-b { animation-name: sv-rise-b; }
+.sv-flash-a { animation-name: sv-flash-a; }
+.sv-flash-c { animation-name: sv-flash-c; }
+.sv-flash-b { animation-name: sv-flash-b; }
+.sv-shake-a { animation-name: sv-shake-a; }
+.sv-shake-c { animation-name: sv-shake-c; }
+.sv-shake-b { animation-name: sv-shake-b; }
+.sv-mvout { animation-name: sv-mvout; }
+.sv-inmv { animation-name: sv-inmv; }
+.sv-inout { animation-name: sv-inout; }
+.sv-pulse { animation-name: sv-pulse; }
+.sv-spin { animation-name: sv-spin; }
+
+@keyframes sv-mv-a { 0%,12% { transform: translate(0,0); } 34%,100% { transform: translate(var(--tx),var(--ty)); } }
+@keyframes sv-hit-a { 0%,12% { transform: translate(0,0); } 21% { transform: translate(var(--tx),var(--ty)); } 34%,100% { transform: translate(0,0); } }
+@keyframes sv-out-a { 0%,12% { opacity: 1; } 34%,100% { opacity: 0; } }
+@keyframes sv-in-a { 0%,12% { opacity: 0; } 34%,100% { opacity: 1; } }
+@keyframes sv-ghost-a { 0%,12% { opacity: 1; } 34%,100% { opacity: .22; } }
+@keyframes sv-pop-a { 0%,12% { opacity: 0; transform: scale(.3); } 34%,100% { opacity: 1; transform: scale(1); } }
+@keyframes sv-rise-a { 0%,12% { opacity: 0; transform: scaleY(0); } 34%,100% { opacity: 1; transform: scaleY(1); } }
+@keyframes sv-flash-a { 0%,12% { opacity: 0; transform: scale(.6); } 34% { opacity: 1; transform: scale(1.15); } 46%,100% { opacity: 0; transform: scale(1.3); } }
+@keyframes sv-shake-a { 0%,12% { transform: translateX(0); } 16% { transform: translateX(1.4px); } 21% { transform: translateX(-1.4px); } 25% { transform: translateX(1.4px); } 30% { transform: translateX(-1.4px); } 34% { transform: translateX(0px); } 100% { transform: translateX(0); } }
+@keyframes sv-mv-c { 0%,28% { transform: translate(0,0); } 50%,100% { transform: translate(var(--tx),var(--ty)); } }
+@keyframes sv-hit-c { 0%,28% { transform: translate(0,0); } 37% { transform: translate(var(--tx),var(--ty)); } 50%,100% { transform: translate(0,0); } }
+@keyframes sv-out-c { 0%,28% { opacity: 1; } 50%,100% { opacity: 0; } }
+@keyframes sv-in-c { 0%,28% { opacity: 0; } 50%,100% { opacity: 1; } }
+@keyframes sv-ghost-c { 0%,28% { opacity: 1; } 50%,100% { opacity: .22; } }
+@keyframes sv-pop-c { 0%,28% { opacity: 0; transform: scale(.3); } 50%,100% { opacity: 1; transform: scale(1); } }
+@keyframes sv-rise-c { 0%,28% { opacity: 0; transform: scaleY(0); } 50%,100% { opacity: 1; transform: scaleY(1); } }
+@keyframes sv-flash-c { 0%,28% { opacity: 0; transform: scale(.6); } 50% { opacity: 1; transform: scale(1.15); } 62%,100% { opacity: 0; transform: scale(1.3); } }
+@keyframes sv-shake-c { 0%,28% { transform: translateX(0); } 32% { transform: translateX(1.4px); } 37% { transform: translateX(-1.4px); } 41% { transform: translateX(1.4px); } 46% { transform: translateX(-1.4px); } 50% { transform: translateX(0px); } 100% { transform: translateX(0); } }
+@keyframes sv-mv-b { 0%,46% { transform: translate(0,0); } 68%,100% { transform: translate(var(--tx),var(--ty)); } }
+@keyframes sv-hit-b { 0%,46% { transform: translate(0,0); } 55% { transform: translate(var(--tx),var(--ty)); } 68%,100% { transform: translate(0,0); } }
+@keyframes sv-out-b { 0%,46% { opacity: 1; } 68%,100% { opacity: 0; } }
+@keyframes sv-in-b { 0%,46% { opacity: 0; } 68%,100% { opacity: 1; } }
+@keyframes sv-ghost-b { 0%,46% { opacity: 1; } 68%,100% { opacity: .22; } }
+@keyframes sv-pop-b { 0%,46% { opacity: 0; transform: scale(.3); } 68%,100% { opacity: 1; transform: scale(1); } }
+@keyframes sv-rise-b { 0%,46% { opacity: 0; transform: scaleY(0); } 68%,100% { opacity: 1; transform: scaleY(1); } }
+@keyframes sv-flash-b { 0%,46% { opacity: 0; transform: scale(.6); } 68% { opacity: 1; transform: scale(1.15); } 80%,100% { opacity: 0; transform: scale(1.3); } }
+@keyframes sv-shake-b { 0%,46% { transform: translateX(0); } 50% { transform: translateX(1.4px); } 55% { transform: translateX(-1.4px); } 59% { transform: translateX(1.4px); } 64% { transform: translateX(-1.4px); } 68% { transform: translateX(0px); } 100% { transform: translateX(0); } }
+@keyframes sv-mvout { 0%,12% { transform: translate(0,0); opacity: 1; } 34%,46% { transform: translate(var(--tx),var(--ty)); opacity: 1; } 66%,100% { transform: translate(var(--tx),var(--ty)); opacity: 0; } }
+@keyframes sv-inmv { 0%,12% { transform: translate(0,0); opacity: 0; } 34%,46% { transform: translate(0,0); opacity: 1; } 68%,100% { transform: translate(var(--tx),var(--ty)); opacity: 1; } }
+@keyframes sv-inout { 0%,12% { opacity: 0; } 34%,46% { opacity: 1; } 66%,100% { opacity: 0; } }
+@keyframes sv-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.14); } }
+@keyframes sv-spin { from { transform: rotate(0deg); } to { transform: rotate(720deg); } }
+@keyframes sv-loop { 0% { opacity: 0; } 6%,90% { opacity: 1; } 100% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-it, .sv-loop { animation: none !important; }
+}
