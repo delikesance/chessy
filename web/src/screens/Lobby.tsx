@@ -4,6 +4,7 @@ import { hrefFor } from "../router";
 import { skillInfo } from "../skills";
 import { store, type AppState } from "../store";
 import { SkillArt } from "../ui/SkillArt";
+import { SoloCard } from "./SoloCard";
 import "./lobby.css";
 
 const DECK_SLOTS = 7;
@@ -55,6 +56,7 @@ export function Lobby({ state }: { state: AppState }) {
       </header>
 
       <div className="lb-grid">
+        <div className="lb-left">
         <section className="card lb-play" aria-label="Jouer">
           {lobby.type === "idle" && (
             <>
@@ -164,6 +166,9 @@ export function Lobby({ state }: { state: AppState }) {
             </div>
           )}
         </section>
+
+        {lobby.type === "idle" && <SoloCard state={state} />}
+        </div>
 
         <section className="card lb-deck" aria-labelledby="deck-title">
           <div className="lb-deck-head">
