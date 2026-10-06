@@ -178,6 +178,9 @@ async fn login(
 ) -> ApiResult<Response> {
     let req: LoginRequest = parse_body(body)?;
     let bad = || ApiError(StatusCode::UNAUTHORIZED, "bad_credentials");
+    if app.login_blocked(&req.username) {
+        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too_many_attempts"));
+    }
     if req.password.len() > 1024 {
         return Err(bad());
     }
@@ -188,8 +191,10 @@ async fn login(
     let password = req.password;
     let ok = blocking(move || verify_password(&password, &hash)).await?;
     let Some((player, _)) = found.filter(|_| ok) else {
+        app.login_failed(&req.username);
         return Err(bad());
     };
+    app.login_succeeded(&req.username);
     let token = app.store().create_session(&player)?;
     let me = app.store().me(&player)?.ok_or_else(bad)?;
     Ok(Json(json!({ "token": token, "player": me })).into_response())

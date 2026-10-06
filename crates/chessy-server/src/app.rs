@@ -1,7 +1,8 @@
 //! Shares the [`Hub`] across connections and runs its timers.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -9,9 +10,15 @@ use crate::hub::{Hub, HubConfig, Timer};
 use crate::protocol::{ClientMsg, PlayerId, ServerMsg};
 use crate::store::{Store, StoreError};
 
+/// Failed logins allowed per username within [`LOGIN_WINDOW`] before it is locked out.
+const LOGIN_MAX_FAILURES: u32 = 8;
+const LOGIN_WINDOW: Duration = Duration::from_secs(300);
+
 pub struct App {
     hub: Mutex<Hub>,
     store: Store,
+    /// Recent failed logins per lower-cased username: (count, window start).
+    login_failures: Mutex<HashMap<String, (u32, Instant)>>,
 }
 
 impl App {
@@ -19,7 +26,49 @@ impl App {
         Arc::new(App {
             hub: Mutex::new(Hub::new(store.clone(), config)),
             store,
+            login_failures: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Whether `username` has failed too many logins recently.
+    pub fn login_blocked(&self, username: &str) -> bool {
+        let mut map = self
+            .login_failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match map.get(&username.to_ascii_lowercase()) {
+            Some((n, since)) if since.elapsed() < LOGIN_WINDOW => *n >= LOGIN_MAX_FAILURES,
+            Some(_) => {
+                map.remove(&username.to_ascii_lowercase());
+                false
+            }
+            None => false,
+        }
+    }
+
+    pub fn login_failed(&self, username: &str) {
+        let mut map = self
+            .login_failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if map.len() > 10_000 {
+            map.retain(|_, (_, since)| since.elapsed() < LOGIN_WINDOW);
+        }
+        let entry = map
+            .entry(username.to_ascii_lowercase())
+            .or_insert((0, Instant::now()));
+        if entry.1.elapsed() >= LOGIN_WINDOW {
+            *entry = (0, Instant::now());
+        }
+        entry.0 += 1;
+    }
+
+    pub fn login_succeeded(&self, username: &str) {
+        let mut map = self
+            .login_failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.remove(&username.to_ascii_lowercase());
     }
 
     /// The database, for the REST API.

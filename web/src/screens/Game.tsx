@@ -147,9 +147,12 @@ export function Game({ view }: { view: StateView }) {
       <main className="gm-grid">
         <aside className="gm-left">
           <SkillList slots={view.my_skills} view={view} myTurn={myTurn} active={activeSkill} onToggle={toggleSkill} />
-          <p className="muted gm-tip">
-            Touches 1 à {Math.max(1, view.my_skills.length)} pour armer une compétence, Échap pour annuler.
-          </p>
+          {view.my_skills.length > 0 && (
+            <p className="muted gm-tip">
+              {view.my_skills.length === 1 ? "Touche 1" : `Touches 1 à ${view.my_skills.length}`} pour armer une
+              compétence, Échap pour annuler.
+            </p>
+          )}
         </aside>
 
         <section className="gm-center" aria-label="Plateau">

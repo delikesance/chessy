@@ -80,6 +80,8 @@ export function mapAuthError(code: string): MappedAuthError {
       return { field: "password", message: "Mot de passe trop faible : 8 à 128 caractères." };
     case "bad_credentials":
       return { field: "form", message: "Pseudo ou mot de passe incorrect." };
+    case "too_many_attempts":
+      return { field: "form", message: "Trop d'échecs de connexion. Réessayez dans quelques minutes." };
     case "network":
       return { field: "form", message: "Impossible de joindre le serveur. Vérifiez votre connexion." };
     default:

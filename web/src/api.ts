@@ -34,6 +34,7 @@ const ERROR_TEXT: Record<string, string> = {
   not_found: "Introuvable.",
   network: "Impossible de joindre le serveur. Vérifiez votre connexion.",
   rate_limited: "Trop de tentatives. Réessayez dans un instant.",
+  too_many_attempts: "Trop d'échecs de connexion. Réessayez dans quelques minutes.",
 };
 
 /** Message français pour une erreur API (ou quelconque). */

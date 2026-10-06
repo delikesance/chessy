@@ -400,3 +400,70 @@ async fn an_old_database_is_migrated_in_place() {
     assert!(store.player_by_token(&token).unwrap().is_some());
     assert!(store.me(&guest).unwrap().unwrap().guest);
 }
+
+#[tokio::test]
+async fn repeated_failed_logins_lock_the_username_for_a_while() {
+    let (api, _, _) = api();
+    api.register("Dave").await;
+    api.register("Erin").await;
+
+    for _ in 0..8 {
+        let (status, _) = api
+            .post(
+                "/api/auth/login",
+                json!({"username": "dave", "password": "not the password"}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    // Even the right password is refused once locked out...
+    let (status, v) = api
+        .post(
+            "/api/auth/login",
+            json!({"username": "DAVE", "password": "correct horse"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(v["error"], "too_many_attempts");
+    // ...but other accounts are unaffected.
+    let (status, _) = api
+        .post(
+            "/api/auth/login",
+            json!({"username": "erin", "password": "correct horse"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_successful_login_clears_earlier_failures() {
+    let (api, _, _) = api();
+    api.register("Fay").await;
+    for _ in 0..7 {
+        api.post(
+            "/api/auth/login",
+            json!({"username": "fay", "password": "nope nope nope"}),
+        )
+        .await;
+    }
+    let (status, _) = api
+        .post(
+            "/api/auth/login",
+            json!({"username": "fay", "password": "correct horse"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    for _ in 0..7 {
+        let (status, _) = api
+            .post(
+                "/api/auth/login",
+                json!({"username": "fay", "password": "nope nope nope"}),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "counter restarted after success"
+        );
+    }
+}

@@ -64,6 +64,7 @@ describe("mapAuthError", () => {
     expect(mapAuthError("invalid_username").field).toBe("username");
     expect(mapAuthError("weak_password").field).toBe("password");
     expect(mapAuthError("bad_credentials")).toMatchObject({ field: "form", message: "Pseudo ou mot de passe incorrect." });
+    expect(mapAuthError("too_many_attempts").message).toMatch(/Trop d'échecs/);
     expect(mapAuthError("network").field).toBe("form");
     expect(mapAuthError("n_importe_quoi").field).toBe("form");
   });
