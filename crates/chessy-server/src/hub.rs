@@ -1296,7 +1296,9 @@ impl Hub {
         let winner = outcome.winner();
         for color in Color::BOTH {
             let player = &session.players[color.index()];
-            let reward = if !solo && Some(color) == winner {
+            // Only a rated game (ranked, between accounts, long enough) pays a skill:
+            // friendly games and Solo would otherwise be farmed.
+            let reward = if !solo && change.is_some() && Some(color) == winner {
                 let loser = &session.players[color.opposite().index()];
                 self.rewards.insert(
                     player.clone(),
