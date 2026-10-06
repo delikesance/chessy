@@ -17,7 +17,7 @@ impl Skill for Teleportation {
                 continue;
             }
             for to in 0..64u8 {
-                if pos.board[to as usize].is_none() && Position::can_stand(piece.kind, to) {
+                if pos.can_place(color, piece.kind, to) {
                     out.push(SkillTarget::PieceTo { from, to });
                 }
             }

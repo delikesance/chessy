@@ -1,3 +1,4 @@
+use crate::skills::SkillId;
 use crate::types::*;
 
 pub const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -40,6 +41,54 @@ pub fn offset(s: Square, df: i8, dr: i8) -> Option<Square> {
     }
 }
 
+/// How a capture changes what happens after the capturer lands (see
+/// [`Position::begin_capture`]).
+pub(crate) enum Reaction {
+    None,
+    /// A Force Field pushes the capturer back.
+    Push,
+    /// Celestial Intervention: the victim goes home instead of dying.
+    Saved(Piece, Square),
+}
+
+/// The position just before a skill was played, so Canceller can undo it.
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    pub position: Position,
+    pub skill: SkillId,
+}
+
+/// What a piece may do while its moves are generated.
+#[derive(Clone, Copy)]
+struct Gen {
+    color: Color,
+    /// Squares it may not stop on or cross (enemy terrain).
+    blocked: u64,
+    /// False for mirages.
+    captures: bool,
+}
+
+/// Chebyshev distance between two squares.
+pub fn king_distance(a: Square, b: Square) -> u8 {
+    file_of(a)
+        .abs_diff(file_of(b))
+        .max(rank_of(a).abs_diff(rank_of(b)))
+}
+
+fn signum(x: i8) -> i8 {
+    x.signum()
+}
+
+/// The type a morphed piece goes back to; a pawn that would land on a back rank
+/// is promoted instead.
+fn revert_kind(orig: PieceKind, at: Square) -> PieceKind {
+    if orig == PieceKind::Pawn && !Position::can_stand(orig, at) {
+        PieceKind::Queen
+    } else {
+        orig
+    }
+}
+
 /// Everything needed to play from a given moment: cheap to clone, so legality
 /// checks and perft can simulate moves on copies.
 #[derive(Clone, Debug)]
@@ -53,7 +102,13 @@ pub struct Position {
     /// Number of actions (moves or skills) played so far; drives effect expiry.
     pub ply: u32,
     pub effects: Vec<ActiveEffect>,
-    next_id: PieceId,
+    pub traps: Vec<Trap>,
+    pub benched: Vec<BenchedPiece>,
+    /// Pawns each side has lost (indexed by `Color::index`); Wall brings them back.
+    pub captured_pawns: [u8; 2],
+    /// Set by a skill that passed the turn, cleared by any other action.
+    pub last_skill_snapshot: Option<Box<Snapshot>>,
+    pub(crate) next_id: PieceId,
 }
 
 impl Position {
@@ -67,6 +122,10 @@ impl Position {
             fullmove: 1,
             ply: 0,
             effects: Vec::new(),
+            traps: Vec::new(),
+            benched: Vec::new(),
+            captured_pawns: [0; 2],
+            last_skill_snapshot: None,
             next_id: 0,
         }
     }
@@ -103,12 +162,8 @@ impl Position {
                         return Err(bad("rank overflows"));
                     }
                     let id = pos.alloc_id();
-                    pos.board[sq(file, rank) as usize] = Some(Piece {
-                        id,
-                        kind,
-                        color,
-                        prev: None,
-                    });
+                    let at = sq(file, rank);
+                    pos.board[at as usize] = Some(Piece::new(id, kind, color, at));
                     file += 1;
                 }
             }
@@ -211,8 +266,12 @@ impl Position {
         self.effects.iter().any(|e| e.piece == id && e.kind == kind)
     }
 
+    /// Whether the piece cannot move: frozen, or a Wall pawn that is still locked.
+    /// Such a piece attacks nothing either.
     pub fn is_frozen(&self, id: PieceId) -> bool {
-        self.has_effect(id, EffectKind::Frozen)
+        self.effects
+            .iter()
+            .any(|e| e.piece == id && matches!(e.kind, EffectKind::Frozen | EffectKind::Locked))
     }
 
     pub fn is_immune(&self, id: PieceId) -> bool {
@@ -220,17 +279,102 @@ impl Position {
     }
 
     pub fn add_effect(&mut self, kind: EffectKind, piece: PieceId, duration_plies: u32) -> Event {
-        let expires_at = self.ply + duration_plies;
-        self.effects.push(ActiveEffect {
-            kind,
-            piece,
-            expires_at,
-        });
+        self.push_effect(ActiveEffect::new(kind, piece, self.ply + duration_plies))
+    }
+
+    /// Adds a fully specified effect and reports it.
+    pub fn push_effect(&mut self, effect: ActiveEffect) -> Event {
+        self.effects.push(effect);
         Event::EffectAdded {
-            piece,
-            effect: kind,
-            expires_at,
+            piece: effect.piece,
+            effect: effect.kind,
+            expires_at: effect.expires_at,
         }
+    }
+
+    /// Squares the pieces of `color` may neither stop on nor cross: the
+    /// Geomancy terrain of the other side.
+    pub fn blocked_mask(&self, color: Color) -> u64 {
+        let mut mask = 0u64;
+        for e in &self.effects {
+            if e.kind == EffectKind::Terrain && e.owner != Some(color) {
+                if let Some(s) = e.square {
+                    mask |= 1u64 << s;
+                }
+            }
+        }
+        mask
+    }
+
+    pub fn trap_at(&self, s: Square) -> bool {
+        self.traps.iter().any(|t| t.square == s)
+    }
+
+    /// Where a skill may put a piece of `color` and `kind`: an empty square it
+    /// can stand on that is neither trapped nor enemy terrain.
+    pub fn can_place(&self, color: Color, kind: PieceKind, s: Square) -> bool {
+        self.board[s as usize].is_none()
+            && Position::can_stand(kind, s)
+            && !self.trap_at(s)
+            && self.blocked_mask(color) & (1u64 << s) == 0
+    }
+
+    /// The free square closest to `origin` (king distance, then square order)
+    /// where a piece of `color` and `kind` may be put.
+    pub fn nearest_free(&self, origin: Square, color: Color, kind: PieceKind) -> Option<Square> {
+        (0..64u8)
+            .filter(|&s| self.can_place(color, kind, s))
+            .min_by_key(|&s| (king_distance(origin, s), s))
+    }
+
+    pub fn find_piece(&self, id: PieceId) -> Option<Square> {
+        self.board
+            .iter()
+            .position(|p| p.is_some_and(|p| p.id == id))
+            .map(|i| i as Square)
+    }
+
+    /// Every square the piece on `from` attacks (including the first piece
+    /// each ray runs into). Frozen pieces and mirages attack nothing.
+    pub fn attacked_squares(&self, from: Square) -> Vec<Square> {
+        let Some(piece) = self.board[from as usize] else {
+            return Vec::new();
+        };
+        if piece.mirage || self.is_frozen(piece.id) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let steps = |deltas: &[(i8, i8)], out: &mut Vec<Square>| {
+            out.extend(deltas.iter().filter_map(|&(df, dr)| offset(from, df, dr)));
+        };
+        match piece.kind {
+            PieceKind::Pawn => {
+                let fwd = piece.color.forward();
+                steps(&[(-1, fwd), (1, fwd)], &mut out);
+            }
+            PieceKind::Knight => steps(&KNIGHT_DELTAS, &mut out),
+            PieceKind::King => steps(&KING_DELTAS, &mut out),
+            PieceKind::Bishop | PieceKind::Rook | PieceKind::Queen => {
+                let mut dirs: Vec<(i8, i8)> = Vec::new();
+                if piece.kind != PieceKind::Rook {
+                    dirs.extend(DIAGONALS);
+                }
+                if piece.kind != PieceKind::Bishop {
+                    dirs.extend(ORTHOGONALS);
+                }
+                for (df, dr) in dirs {
+                    let mut cur = from;
+                    while let Some(next) = offset(cur, df, dr) {
+                        cur = next;
+                        out.push(cur);
+                        if self.board[cur as usize].is_some() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     pub fn king_square(&self, color: Color) -> Option<Square> {
@@ -240,11 +384,16 @@ impl Position {
     }
 
     /// Whether `target` is attacked by a piece of color `by`. Frozen pieces
-    /// cannot move, so they attack nothing.
+    /// cannot move, and mirages never capture, so they attack nothing; enemy
+    /// terrain cannot be stopped on or crossed.
     pub fn is_attacked(&self, target: Square, by: Color) -> bool {
+        let blocked = self.blocked_mask(by);
+        if blocked & (1u64 << target) != 0 {
+            return false;
+        }
         let hits = |s: Square, kinds: &[PieceKind]| -> bool {
             matches!(self.board[s as usize], Some(p)
-                if p.color == by && kinds.contains(&p.kind) && !self.is_frozen(p.id))
+                if p.color == by && kinds.contains(&p.kind) && !p.mirage && !self.is_frozen(p.id))
         };
 
         // Pawns attack diagonally forward, so they sit one rank "behind" the target.
@@ -278,6 +427,9 @@ impl Position {
                 let mut cur = target;
                 while let Some(next) = offset(cur, df, dr) {
                     cur = next;
+                    if blocked & (1u64 << cur) != 0 {
+                        break;
+                    }
                     if self.board[cur as usize].is_some() {
                         if hits(cur, &[slider, PieceKind::Queen]) {
                             return true;
@@ -301,33 +453,44 @@ impl Position {
         kind != PieceKind::Pawn || !matches!(rank_of(target), 0 | 7)
     }
 
-    fn can_capture(&self, mover: Color, target: Square) -> bool {
-        match self.board[target as usize] {
-            None => true,
-            Some(p) => p.color != mover && !self.is_immune(p.id),
-        }
-    }
-
     pub fn pseudo_moves(&self, out: &mut Vec<Move>) {
         let color = self.side;
+        let blocked = self.blocked_mask(color);
         for (from, piece) in self.pieces(color) {
             if self.is_frozen(piece.id) {
                 continue;
             }
+            // A mirage can walk but never takes anything.
+            let ctx = Gen {
+                color,
+                blocked,
+                captures: !piece.mirage,
+            };
             match piece.kind {
-                PieceKind::Pawn => self.pawn_moves(from, color, out),
-                PieceKind::Knight => self.step_moves(from, color, &KNIGHT_DELTAS, out),
+                PieceKind::Pawn => self.pawn_moves(from, ctx, out),
+                PieceKind::Knight => self.step_moves(from, ctx, &KNIGHT_DELTAS, out),
                 PieceKind::King => {
-                    self.step_moves(from, color, &KING_DELTAS, out);
-                    self.castling_moves(from, color, out);
+                    self.step_moves(from, ctx, &KING_DELTAS, out);
+                    self.castling_moves(from, ctx, out);
                 }
-                PieceKind::Bishop => self.slide_moves(from, color, &DIAGONALS, out),
-                PieceKind::Rook => self.slide_moves(from, color, &ORTHOGONALS, out),
+                PieceKind::Bishop => self.slide_moves(from, ctx, &DIAGONALS, out),
+                PieceKind::Rook => self.slide_moves(from, ctx, &ORTHOGONALS, out),
                 PieceKind::Queen => {
-                    self.slide_moves(from, color, &DIAGONALS, out);
-                    self.slide_moves(from, color, &ORTHOGONALS, out);
+                    self.slide_moves(from, ctx, &DIAGONALS, out);
+                    self.slide_moves(from, ctx, &ORTHOGONALS, out);
                 }
             }
+        }
+    }
+
+    /// Whether the piece described by `ctx` may end a move on `target`.
+    fn can_land(&self, ctx: Gen, target: Square) -> bool {
+        if ctx.blocked & (1u64 << target) != 0 {
+            return false;
+        }
+        match self.board[target as usize] {
+            None => true,
+            Some(p) => ctx.captures && p.color != ctx.color && !self.is_immune(p.id),
         }
     }
 
@@ -349,14 +512,15 @@ impl Position {
         }
     }
 
-    fn pawn_moves(&self, from: Square, color: Color, out: &mut Vec<Move>) {
+    fn pawn_moves(&self, from: Square, ctx: Gen, out: &mut Vec<Move>) {
+        let color = ctx.color;
         let fwd = color.forward();
         if let Some(one) = offset(from, 0, fwd) {
-            if self.board[one as usize].is_none() {
+            if self.board[one as usize].is_none() && ctx.blocked & (1u64 << one) == 0 {
                 self.push_pawn_move(from, one, color, out);
                 if rank_of(from) == color.pawn_start_rank() {
                     if let Some(two) = offset(from, 0, 2 * fwd) {
-                        if self.board[two as usize].is_none() {
+                        if self.board[two as usize].is_none() && ctx.blocked & (1u64 << two) == 0 {
                             out.push(Move {
                                 from,
                                 to: two,
@@ -367,10 +531,16 @@ impl Position {
                 }
             }
         }
+        if !ctx.captures {
+            return;
+        }
         for df in [-1, 1] {
             let Some(to) = offset(from, df, fwd) else {
                 continue;
             };
+            if ctx.blocked & (1u64 << to) != 0 {
+                continue;
+            }
             match self.board[to as usize] {
                 Some(p) if p.color != color && !self.is_immune(p.id) => {
                     self.push_pawn_move(from, to, color, out)
@@ -392,10 +562,10 @@ impl Position {
         }
     }
 
-    fn step_moves(&self, from: Square, color: Color, deltas: &[(i8, i8); 8], out: &mut Vec<Move>) {
+    fn step_moves(&self, from: Square, ctx: Gen, deltas: &[(i8, i8); 8], out: &mut Vec<Move>) {
         for &(df, dr) in deltas {
             if let Some(to) = offset(from, df, dr) {
-                if self.can_capture(color, to) {
+                if self.can_land(ctx, to) {
                     out.push(Move {
                         from,
                         to,
@@ -406,11 +576,14 @@ impl Position {
         }
     }
 
-    fn slide_moves(&self, from: Square, color: Color, dirs: &[(i8, i8); 4], out: &mut Vec<Move>) {
+    fn slide_moves(&self, from: Square, ctx: Gen, dirs: &[(i8, i8); 4], out: &mut Vec<Move>) {
         for &(df, dr) in dirs {
             let mut cur = from;
             while let Some(to) = offset(cur, df, dr) {
                 cur = to;
+                if ctx.blocked & (1u64 << to) != 0 {
+                    break;
+                }
                 if self.board[to as usize].is_none() {
                     out.push(Move {
                         from,
@@ -418,7 +591,7 @@ impl Position {
                         promo: None,
                     });
                 } else {
-                    if self.can_capture(color, to) {
+                    if self.can_land(ctx, to) {
                         out.push(Move {
                             from,
                             to,
@@ -431,7 +604,8 @@ impl Position {
         }
     }
 
-    fn castling_moves(&self, from: Square, color: Color, out: &mut Vec<Move>) {
+    fn castling_moves(&self, from: Square, ctx: Gen, out: &mut Vec<Move>) {
+        let color = ctx.color;
         let rank = color.home_rank();
         if from != sq(4, rank) {
             return;
@@ -443,7 +617,8 @@ impl Position {
         let enemy = color.opposite();
         let rook_ready = |file: u8| {
             matches!(self.board[sq(file, rank) as usize], Some(p)
-                if p.kind == PieceKind::Rook && p.color == color && !self.is_frozen(p.id))
+                if p.kind == PieceKind::Rook && p.color == color && !p.mirage
+                    && !self.is_frozen(p.id))
         };
         let empty = |files: &[u8]| {
             files
@@ -451,15 +626,29 @@ impl Position {
                 .all(|&f| self.board[sq(f, rank) as usize].is_none())
         };
         let safe = |files: &[u8]| files.iter().all(|&f| !self.is_attacked(sq(f, rank), enemy));
+        let open = |files: &[u8]| {
+            files
+                .iter()
+                .all(|&f| ctx.blocked & (1u64 << sq(f, rank)) == 0)
+        };
 
-        if self.castling & king_bit != 0 && rook_ready(7) && empty(&[5, 6]) && safe(&[4, 5, 6]) {
+        if self.castling & king_bit != 0
+            && rook_ready(7)
+            && empty(&[5, 6])
+            && open(&[5, 6])
+            && safe(&[4, 5, 6])
+        {
             out.push(Move {
                 from,
                 to: sq(6, rank),
                 promo: None,
             });
         }
-        if self.castling & queen_bit != 0 && rook_ready(0) && empty(&[1, 2, 3]) && safe(&[4, 3, 2])
+        if self.castling & queen_bit != 0
+            && rook_ready(0)
+            && empty(&[1, 2, 3])
+            && open(&[2, 3])
+            && safe(&[4, 3, 2])
         {
             out.push(Move {
                 from,
@@ -485,13 +674,164 @@ impl Position {
             .collect()
     }
 
+    /// The first enemy trap `piece` runs into on its way `from` -> `to`. Sliders
+    /// and double pawn steps cross every square in between; everything else
+    /// only touches the square it lands on.
+    fn trap_on_path(&self, piece: &Piece, from: Square, to: Square) -> Option<Square> {
+        let sprung = |s: Square| {
+            self.traps
+                .iter()
+                .any(|t| t.square == s && t.owner != piece.color)
+        };
+        let crosses = match piece.kind {
+            PieceKind::Bishop | PieceKind::Rook | PieceKind::Queen => true,
+            PieceKind::Pawn => rank_of(from).abs_diff(rank_of(to)) == 2,
+            _ => false,
+        };
+        if !crosses {
+            return sprung(to).then_some(to);
+        }
+        let df = signum(file_of(to) as i8 - file_of(from) as i8);
+        let dr = signum(rank_of(to) as i8 - rank_of(from) as i8);
+        let mut cur = from;
+        while cur != to {
+            cur = offset(cur, df, dr)?;
+            if sprung(cur) {
+                return Some(cur);
+            }
+        }
+        None
+    }
+
+    /// Records the capture of `victim` on `square`: reports it, keeps the
+    /// graveyard of pawns and applies Celestial Intervention / Force Field.
+    /// The caller finishes the job with [`Position::finish_capture`] once the
+    /// capturer stands on its new square.
+    pub(crate) fn begin_capture(
+        &mut self,
+        square: Square,
+        victim: Piece,
+        ev: &mut Vec<Event>,
+    ) -> Reaction {
+        let mut reaction = Reaction::None;
+        let mut real_kind = victim.kind;
+        if !self.effects.is_empty() {
+            if self.has_effect(victim.id, EffectKind::Celestial) {
+                self.effects
+                    .retain(|e| !(e.piece == victim.id && e.kind == EffectKind::Celestial));
+                return Reaction::Saved(victim, square);
+            }
+            if self.has_effect(victim.id, EffectKind::Forcefield) {
+                reaction = Reaction::Push;
+            }
+            if let Some(orig) = self
+                .effects
+                .iter()
+                .find(|e| e.piece == victim.id && e.kind == EffectKind::Morphed)
+                .and_then(|e| e.orig_kind)
+            {
+                real_kind = orig;
+            }
+            self.effects.retain(|e| e.piece != victim.id);
+        }
+        ev.push(Event::Captured {
+            square,
+            piece: victim,
+        });
+        if real_kind == PieceKind::Pawn && !victim.wall && !victim.mirage && !victim.temp {
+            let n = &mut self.captured_pawns[victim.color.index()];
+            *n = n.saturating_add(1);
+        }
+        reaction
+    }
+
+    /// Second half of a capture: the capturer now stands on `to`, having left `from`.
+    pub(crate) fn finish_capture(
+        &mut self,
+        reaction: Reaction,
+        from: Square,
+        to: Square,
+        ev: &mut Vec<Event>,
+    ) {
+        match reaction {
+            Reaction::None => {}
+            Reaction::Saved(piece, at) => {
+                match self.nearest_free(piece.home, piece.color, piece.kind) {
+                    Some(dest) => {
+                        let mut saved = piece;
+                        saved.prev = None;
+                        self.board[dest as usize] = Some(saved);
+                        ev.push(Event::Saved {
+                            piece: piece.id,
+                            from: at,
+                            to: dest,
+                        });
+                    }
+                    None => {
+                        // Nowhere to go: the piece is lost after all.
+                        self.effects.retain(|e| e.piece != piece.id);
+                        ev.push(Event::Captured { square: at, piece });
+                    }
+                }
+            }
+            Reaction::Push => {
+                let Some(mut piece) = self.board[to as usize] else {
+                    return;
+                };
+                let df = signum(file_of(from) as i8 - file_of(to) as i8);
+                let dr = signum(rank_of(from) as i8 - rank_of(to) as i8);
+                let blocked = self.blocked_mask(piece.color);
+                let mut cur = to;
+                for _ in 0..2 {
+                    let Some(next) = offset(cur, df, dr) else {
+                        break;
+                    };
+                    if self.board[next as usize].is_some()
+                        || blocked & (1u64 << next) != 0
+                        || !Position::can_stand(piece.kind, next)
+                    {
+                        break;
+                    }
+                    cur = next;
+                }
+                if cur != to {
+                    self.board[to as usize] = None;
+                    piece.prev = None;
+                    self.board[cur as usize] = Some(piece);
+                    ev.push(Event::Pushed {
+                        piece: piece.id,
+                        from: to,
+                        to: cur,
+                    });
+                }
+            }
+        }
+    }
+
     /// Plays `mv` without checking legality; callers go through `legal_moves`.
+    /// A slider that runs into an enemy trap stops on it, so the move that
+    /// actually happens may end earlier than `mv.to`.
     pub fn make_move(&mut self, mv: Move, ev: &mut Vec<Event>) {
         let color = self.side;
+        let mut mv = mv;
         let mut piece = self.board[mv.from as usize]
             .take()
             .expect("move from an occupied square");
-        let mut captured = self.board[mv.to as usize].take();
+
+        let mut sprung = None;
+        if !self.traps.is_empty() {
+            if let Some(t) = self.trap_on_path(&piece, mv.from, mv.to) {
+                sprung = Some(t);
+                if t != mv.to {
+                    mv.to = t;
+                    mv.promo = None;
+                }
+            }
+        }
+
+        let captured = self.board[mv.to as usize].take();
+        let mut reaction = Reaction::None;
+        let mut took = captured.is_some();
         let mut new_ep = None;
 
         if piece.kind == PieceKind::Pawn {
@@ -500,15 +840,10 @@ impl Position {
                 && captured.is_none()
             {
                 let victim = sq(file_of(mv.to), rank_of(mv.from));
-                captured = self.board[victim as usize].take();
-                if let Some(p) = captured {
-                    ev.push(Event::Captured {
-                        square: victim,
-                        piece: p,
-                    });
+                if let Some(p) = self.board[victim as usize].take() {
+                    reaction = self.begin_capture(victim, p, ev);
+                    took = true;
                 }
-                captured = None; // already reported
-                self.halfmove = 0;
             }
             if rank_of(mv.from).abs_diff(rank_of(mv.to)) == 2 {
                 new_ep = Some((mv.from + mv.to) / 2);
@@ -516,10 +851,7 @@ impl Position {
         }
 
         if let Some(p) = captured {
-            ev.push(Event::Captured {
-                square: mv.to,
-                piece: p,
-            });
+            reaction = self.begin_capture(mv.to, p, ev);
         }
 
         if piece.kind == PieceKind::King && file_of(mv.from).abs_diff(file_of(mv.to)) == 2 {
@@ -554,7 +886,7 @@ impl Position {
             };
         }
 
-        if piece.kind == PieceKind::Pawn || captured.is_some() {
+        if piece.kind == PieceKind::Pawn || took {
             self.halfmove = 0;
         } else {
             self.halfmove += 1;
@@ -579,7 +911,22 @@ impl Position {
         }
         self.board[mv.to as usize] = Some(piece);
         self.en_passant = new_ep;
-        self.end_turn();
+        self.last_skill_snapshot = None;
+
+        self.finish_capture(reaction, mv.from, mv.to, ev);
+
+        if let Some(trap) = sprung {
+            self.traps
+                .retain(|t| !(t.square == trap && t.owner != color));
+            ev.push(Event::TrapSprung {
+                square: trap,
+                piece: piece.id,
+            });
+            // Two of the owner's turns: ply + 1 is the end of this move.
+            let frozen = self.add_effect(EffectKind::Frozen, piece.id, 5);
+            ev.push(frozen);
+        }
+        self.end_turn_events(ev);
     }
 
     /// Drops castling rights whose king or rook is no longer on its home square
@@ -604,13 +951,103 @@ impl Position {
 
     /// Hands the turn over: advances the move counters and expires effects.
     pub fn end_turn(&mut self) {
+        let mut sink = Vec::new();
+        self.end_turn_events(&mut sink);
+    }
+
+    /// [`Position::end_turn`], reporting what the expiries did (temporary
+    /// pieces vanishing, borrowed pieces going home, benched pieces returning...).
+    pub fn end_turn_events(&mut self, ev: &mut Vec<Event>) {
         if self.side == Color::Black {
             self.fullmove += 1;
         }
         self.side = self.side.opposite();
         self.ply += 1;
+        if !self.effects.is_empty() {
+            self.expire_effects(ev);
+        }
+        if !self.benched.is_empty() {
+            self.return_benched(ev);
+        }
+    }
+
+    fn expire_effects(&mut self, ev: &mut Vec<Event>) {
         let ply = self.ply;
+        if self.effects.iter().all(|e| e.expires_at > ply) {
+            return;
+        }
+        let expired: Vec<ActiveEffect> = self
+            .effects
+            .iter()
+            .filter(|e| e.expires_at <= ply)
+            .copied()
+            .collect();
         self.effects.retain(|e| e.expires_at > ply);
+        for e in expired {
+            match e.kind {
+                EffectKind::ColorLoan => {
+                    let Some(back) = e.orig_color else { continue };
+                    if let Some(s) = self.find_piece(e.piece) {
+                        let piece = self.board[s as usize].as_mut().expect("found piece");
+                        piece.color = back;
+                        piece.prev = None;
+                        ev.push(Event::LoanEnded {
+                            square: s,
+                            piece: *piece,
+                        });
+                    }
+                }
+                EffectKind::Morphed => {
+                    let Some(orig) = e.orig_kind else { continue };
+                    if let Some(s) = self.find_piece(e.piece) {
+                        let piece = self.board[s as usize].as_mut().expect("found piece");
+                        piece.kind = revert_kind(orig, s);
+                        ev.push(Event::Transformed {
+                            square: s,
+                            kind: piece.kind,
+                        });
+                    } else if let Some(b) = self.benched.iter_mut().find(|b| b.piece.id == e.piece)
+                    {
+                        b.piece.kind = revert_kind(orig, b.square);
+                    }
+                }
+                EffectKind::Vanish => {
+                    if let Some(s) = self.find_piece(e.piece) {
+                        let piece = self.board[s as usize].take().expect("found piece");
+                        ev.push(Event::Vanished { square: s, piece });
+                    } else {
+                        self.benched.retain(|b| b.piece.id != e.piece);
+                    }
+                    self.effects.retain(|o| o.piece != e.piece);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn return_benched(&mut self, ev: &mut Vec<Event>) {
+        let ply = self.ply;
+        if self.benched.iter().all(|b| b.back_at > ply) {
+            return;
+        }
+        let (back, stay): (Vec<_>, Vec<_>) = std::mem::take(&mut self.benched)
+            .into_iter()
+            .partition(|b| b.back_at <= ply);
+        self.benched = stay;
+        for b in back {
+            let mut piece = b.piece;
+            match self.nearest_free(b.square, piece.color, piece.kind) {
+                Some(dest) => {
+                    piece.prev = None;
+                    self.board[dest as usize] = Some(piece);
+                    ev.push(Event::Unbenched {
+                        square: dest,
+                        piece,
+                    });
+                }
+                None => self.effects.retain(|e| e.piece != piece.id),
+            }
+        }
     }
 
     /// Number of leaf nodes at `depth` plies of plain chess (no skills).

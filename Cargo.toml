@@ -11,3 +11,8 @@ authors = ["Garder500"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+# The engine is CPU-bound (perft, search, every skill is simulated to list legal
+# actions): optimise it even in dev/test builds. Overflow checks stay on.
+[profile.dev.package.chessy-engine]
+opt-level = 3

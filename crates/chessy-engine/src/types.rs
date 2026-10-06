@@ -136,6 +136,10 @@ impl PieceKind {
     }
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Piece {
     pub id: PieceId,
@@ -144,6 +148,33 @@ pub struct Piece {
     /// Square this piece last reached by a real move (used by Rollback).
     #[serde(skip)]
     pub prev: Option<Square>,
+    /// The square the piece started on (Celestial Intervention sends it back there).
+    #[serde(default)]
+    pub home: Square,
+    /// Summoned by Mirage: never captures, attacks nothing, vanishes when taken.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mirage: bool,
+    /// Brought back by Wall: its death is not recorded in the graveyard.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wall: bool,
+    /// A temporary piece (Terminator copy, God Help): it has no graveyard entry.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub temp: bool,
+}
+
+impl Piece {
+    pub fn new(id: PieceId, kind: PieceKind, color: Color, home: Square) -> Self {
+        Piece {
+            id,
+            kind,
+            color,
+            prev: None,
+            home,
+            mirage: false,
+            wall: false,
+            temp: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -161,7 +192,28 @@ pub enum EffectKind {
     Immune,
     /// The piece cannot move (and therefore gives no check).
     Frozen,
+    /// The opponent cannot see the piece (the server hides it).
+    Invisible,
+    /// When the piece is captured, the capturer is pushed back.
+    Forcefield,
+    /// When the piece is captured, it goes back to its starting square instead (once).
+    Celestial,
+    /// Wall pawns cannot move for a turn.
+    Locked,
+    /// The piece temporarily has another type (`orig_kind`).
+    Morphed,
+    /// The piece temporarily fights for the other side (`orig_color`).
+    ColorLoan,
+    /// The piece disappears when the effect expires.
+    Vanish,
+    /// Geomancy terrain: not tied to a piece; see `square` and `owner`.
+    Terrain,
 }
+
+/// `ActiveEffect::piece` for effects that are not about a piece (terrain).
+pub const NO_PIECE: PieceId = PieceId::MAX;
+/// `expires_at` of effects that last until something happens to the piece.
+pub const NEVER: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveEffect {
@@ -169,6 +221,55 @@ pub struct ActiveEffect {
     pub piece: PieceId,
     /// The effect is active while `Position::ply < expires_at`.
     pub expires_at: u32,
+    /// Terrain: the covered square.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub square: Option<Square>,
+    /// Terrain: the player who created it (their pieces are not hindered).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Color>,
+    /// Morph: the type to go back to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orig_kind: Option<PieceKind>,
+    /// Color loan: the side the piece goes back to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orig_color: Option<Color>,
+}
+
+impl ActiveEffect {
+    pub fn new(kind: EffectKind, piece: PieceId, expires_at: u32) -> Self {
+        ActiveEffect {
+            kind,
+            piece,
+            expires_at,
+            square: None,
+            owner: None,
+            orig_kind: None,
+            orig_color: None,
+        }
+    }
+}
+
+/// A Trap Card laid by `owner`: it catches the first enemy piece to cross `square`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Trap {
+    pub square: Square,
+    pub owner: Color,
+}
+
+/// A piece set aside by The Bench; it returns at `back_at` (a `Position::ply`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchedPiece {
+    pub piece: Piece,
+    /// Where it stood when benched.
+    pub square: Square,
+    pub back_at: u32,
+}
+
+/// One piece going from `from` to `to` (Tornado).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Shift {
+    pub from: Square,
+    pub to: Square,
 }
 
 /// Something a player can do with their turn.
@@ -248,6 +349,74 @@ pub enum Event {
         piece: PieceId,
         effect: EffectKind,
         expires_at: u32,
+    },
+    /// A piece appeared (Wall, Mirage, Terminator, God Help).
+    Spawned {
+        square: Square,
+        piece: Piece,
+    },
+    /// The piece on `square` changed type (Evolve, Morph, or a Morph wearing off).
+    Transformed {
+        square: Square,
+        kind: PieceKind,
+    },
+    /// The piece on `square` changed sides for good (Switch Sides).
+    Switched {
+        square: Square,
+        piece: Piece,
+    },
+    Rotated {
+        moves: Vec<Shift>,
+    },
+    TrapSet {
+        square: Square,
+    },
+    TrapSprung {
+        square: Square,
+        piece: PieceId,
+    },
+    Benched {
+        square: Square,
+        piece: Piece,
+    },
+    Unbenched {
+        square: Square,
+        piece: Piece,
+    },
+    /// A Force Field pushed the capturer back.
+    Pushed {
+        piece: PieceId,
+        from: Square,
+        to: Square,
+    },
+    /// Celestial Intervention saved a captured piece and sent it home.
+    Saved {
+        piece: PieceId,
+        from: Square,
+        to: Square,
+    },
+    BestMove {
+        from: Square,
+        to: Square,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        promo: Option<PieceKind>,
+    },
+    /// The last skill of the opponent was undone.
+    Cancelled {
+        skill: SkillId,
+    },
+    Terrain {
+        squares: Vec<Square>,
+    },
+    /// A temporary piece disappeared.
+    Vanished {
+        square: Square,
+        piece: Piece,
+    },
+    /// A piece lent by Mind Control went back to its side.
+    LoanEnded {
+        square: Square,
+        piece: Piece,
     },
 }
 

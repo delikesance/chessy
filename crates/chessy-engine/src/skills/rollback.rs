@@ -17,7 +17,7 @@ impl Skill for Rollback {
             .filter(|(_, p)| !pos.is_frozen(p.id))
             .filter(|(_, p)| {
                 p.prev
-                    .is_some_and(|prev| pos.board[prev as usize].is_none())
+                    .is_some_and(|prev| pos.can_place(color, p.kind, prev))
             })
             .map(|(square, _)| SkillTarget::Piece { square })
             .collect()

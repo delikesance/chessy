@@ -11,6 +11,6 @@ pub mod skills;
 pub mod types;
 
 pub use game::{Game, Loadout, SkillSlot};
-pub use position::{Position, START_FEN};
+pub use position::{Position, Snapshot, START_FEN};
 pub use skills::{skill, Skill, SkillId, SkillKind, SkillTarget};
 pub use types::*;

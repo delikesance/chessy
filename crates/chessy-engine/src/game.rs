@@ -10,10 +10,15 @@ use crate::types::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillSlot {
     pub skill: SkillId,
+    /// True once `uses` has reached the skill's `max_uses`.
     pub used: bool,
+    /// How many times the skill has been used this game.
+    #[serde(default)]
+    pub uses: u8,
 }
 
-/// The skills one player brought to this game. Each can be used once.
+/// The skills one player brought to this game. Each can be used once (Mind
+/// Reading three times).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Loadout {
     pub slots: Vec<SkillSlot>,
@@ -24,7 +29,11 @@ impl Loadout {
         Loadout {
             slots: skills
                 .iter()
-                .map(|&skill| SkillSlot { skill, used: false })
+                .map(|&skill| SkillSlot {
+                    skill,
+                    used: false,
+                    uses: 0,
+                })
                 .collect(),
         }
     }
@@ -95,7 +104,7 @@ impl Game {
             .filter(|s| !s.used)
         {
             for target in skill(slot.skill).targets(&self.pos, color) {
-                if self.pos.try_skill(slot.skill, target).is_some() {
+                if self.pos.skill_is_legal(slot.skill, target) {
                     out.push(Action::Skill {
                         skill: slot.skill,
                         target,
@@ -143,9 +152,17 @@ impl Game {
                     .pos
                     .try_skill(id, target)
                     .ok_or(RuleError::IllegalAction)?;
+                let passed = next.ply != self.pos.ply;
                 self.pos = next;
-                self.loadouts[color.index()].slots[slot].used = true;
+                let slot = &mut self.loadouts[color.index()].slots[slot];
+                slot.uses = slot.uses.saturating_add(1);
+                slot.used = slot.uses >= skill(id).max_uses();
                 events = ev;
+                if !passed {
+                    // The same player acts again: nothing new to remember.
+                    self.outcome = self.compute_outcome();
+                    return Ok(events);
+                }
             }
         }
         self.record_position();
@@ -180,12 +197,14 @@ impl Game {
     fn position_hash(&self) -> u64 {
         let mut h = std::hash::DefaultHasher::new();
         for p in &self.pos.board {
-            p.map(|p| (p.kind, p.color)).hash(&mut h);
+            p.map(|p| (p.kind, p.color, p.mirage)).hash(&mut h);
         }
         self.pos.side.hash(&mut h);
         self.pos.castling.hash(&mut h);
         self.pos.en_passant.hash(&mut h);
         self.pos.effects.len().hash(&mut h);
+        self.pos.traps.len().hash(&mut h);
+        self.pos.benched.len().hash(&mut h);
         h.finish()
     }
 
@@ -222,7 +241,7 @@ impl Game {
     /// King vs king, or king and one minor piece vs king, with no skill left
     /// that could change that.
     fn insufficient_material(&self) -> bool {
-        if self.loadouts.iter().any(Loadout::has_unused) {
+        if self.loadouts.iter().any(Loadout::has_unused) || !self.pos.benched.is_empty() {
             return false;
         }
         let others: Vec<PieceKind> = self
