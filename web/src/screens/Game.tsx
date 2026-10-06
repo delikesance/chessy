@@ -322,15 +322,14 @@ export function Game({ view }: { view: StateView }) {
   } else if (view.draw_offer === "them") {
     hint = "Votre adversaire propose la nulle.";
   } else {
+    const waiting = isBot ? `${oppName} réfléchit…` : "Tour de l'adversaire…";
     hint = myTurn
-        ? "À vous de jouer. Sélectionnez une pièce ou une compétence."
-        : isBot
-          ? `${oppName} réfléchit…`
-          : premove && !premove.failed
-            ? "Premove posé : il partira dès votre tour."
-            : theme.premove
-              ? "Tour de l'adversaire… Vous pouvez préparer un coup."
-              : "Tour de l'adversaire…";
+      ? "À vous de jouer. Sélectionnez une pièce ou une compétence."
+      : premove && !premove.failed
+        ? `${waiting} Premove posé : il partira dès votre tour.`
+        : theme.premove
+          ? `${waiting} Vous pouvez préparer un coup.`
+          : waiting;
   }
 
   return (

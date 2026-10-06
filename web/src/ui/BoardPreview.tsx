@@ -80,15 +80,16 @@ function draw(canvas: HTMLCanvasElement, theme: ThemeSettings) {
   ctx.lineWidth = 6;
   ctx.lineCap = "butt";
   ctx.setLineDash([13, 9]);
+  // Le premove monte d'une case (d2 vers d3) : tirets puis pointe vers le haut.
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y + 14);
-  ctx.lineTo(b.x, b.y - 18);
+  ctx.moveTo(a.x, a.y - 16);
+  ctx.lineTo(b.x, b.y + 20);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.moveTo(b.x, b.y - 6);
-  ctx.lineTo(b.x - 14, b.y - 28);
-  ctx.lineTo(b.x + 14, b.y - 28);
+  ctx.moveTo(b.x, b.y - 10);
+  ctx.lineTo(b.x - 14, b.y + 14);
+  ctx.lineTo(b.x + 14, b.y + 14);
   ctx.closePath();
   ctx.fill();
 

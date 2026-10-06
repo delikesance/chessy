@@ -459,6 +459,8 @@ export class Store {
 }
 
 export const store = new Store();
+// Lets the dev console and browser checks drive the store (never in production builds).
+if (import.meta.env.DEV && typeof window !== "undefined") (window as unknown as { __chessyStore: Store }).__chessyStore = store;
 
 export function useAppState(): AppState {
   return useSyncExternalStore(store.subscribe, store.getState);

@@ -95,6 +95,8 @@ function makeNoise(ctx: AudioContext, seconds = 1.5): AudioBuffer {
 /** Chaîne de sortie : bus -> compresseur/limiteur -> gain général -> sortie ; réverbération en parallèle. */
 export function createEngine(ctx: AudioContext, masterGain: number): Engine {
   const bus = ctx.createGain();
+  // Les recettes sont écrites à niveau modeste (crêtes 0,1 à 0,55) : gain de rattrapage avant le limiteur.
+  bus.gain.value = 1.45;
   const master = ctx.createGain();
   master.gain.value = masterGain;
   const limiter = ctx.createDynamicsCompressor();
