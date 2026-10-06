@@ -1,13 +1,18 @@
 // Textures du plateau et des pièces, générées sur canvas : aucune image externe.
 import type { Color, PieceKind } from "../protocol";
+import { luminance, mixHex } from "../theme";
 
 export const TILE = 80;
 export const FRAME = 24;
 export const BOARD_PX = TILE * 8;
 export const SIZE = BOARD_PX + FRAME * 2;
 
-const LIGHT = "#9aa1ac";
-const DARK = "#59606c";
+export interface BoardColors {
+  light: string;
+  dark: string;
+}
+
+export const DEFAULT_BOARD: BoardColors = { light: "#cdd1d9", dark: "#69727f" };
 
 /** Générateur pseudo-aléatoire déterministe : la pierre est identique à chaque partie. */
 function mulberry32(seed: number) {
@@ -28,7 +33,7 @@ function shade(hex: string, amount: number): string {
 }
 
 /** Cadre usiné + 64 cases de pierre + coordonnées dans les cases. */
-export function drawBoard(canvas: HTMLCanvasElement, orientation: Color) {
+export function drawBoard(canvas: HTMLCanvasElement, orientation: Color, colors: BoardColors = DEFAULT_BOARD) {
   canvas.width = SIZE;
   canvas.height = SIZE;
   const ctx = canvas.getContext("2d")!;
@@ -60,7 +65,7 @@ export function drawBoard(canvas: HTMLCanvasElement, orientation: Color) {
       const file = orientation === "white" ? col : 7 - col;
       const rank = orientation === "white" ? 7 - row : row;
       const light = (file + rank) % 2 === 1;
-      const base = light ? LIGHT : DARK;
+      const base = light ? colors.light : colors.dark;
 
       const g = ctx.createLinearGradient(x, y, x + TILE, y + TILE);
       g.addColorStop(0, shade(base, 0.05));
@@ -96,7 +101,7 @@ export function drawBoard(canvas: HTMLCanvasElement, orientation: Color) {
       ctx.fillRect(x + TILE - 1, y, 1, TILE);
 
       // Coordonnées dans les cases : rang sur la colonne de gauche, colonne sur la rangée du bas.
-      ctx.fillStyle = light ? "rgba(30,34,41,0.7)" : "rgba(233,235,239,0.62)";
+      ctx.fillStyle = luminance(base) > 0.35 ? "rgba(30,34,41,0.72)" : "rgba(246,247,250,0.8)";
       if (col === 0) {
         ctx.textAlign = "left";
         ctx.fillText(String(rank + 1), x + 5, y + 4);
@@ -175,16 +180,49 @@ const SHAPES: Record<PieceKind, Shape> = {
 
 export const PIECE_TEX = 128;
 
-export function pieceKey(color: Color, kind: PieceKind): string {
-  return `piece-${color}-${kind}`;
+/** Clé de texture : l'ensemble classique garde les clés d'origine. */
+export function pieceKey(color: Color, kind: PieceKind, set = "classic"): string {
+  return set === "classic" ? `piece-${color}-${kind}` : `piece-${set}-${color}-${kind}`;
+}
+
+interface PiecePalette {
+  shadow: string;
+  light: string;
+  mid: string;
+  dark: string;
+  outline: string;
+  glint: string;
+  detail: string;
+  eye: string;
+}
+
+/** Couleurs d'une pièce : ivoire/ébène d'origine, ou dégradé calculé depuis une teinte (jeux néon, or, braise). */
+export function piecePalette(white: boolean, tint: string | null): PiecePalette {
+  if (tint) {
+    const bright = luminance(tint) > 0.4;
+    return {
+      shadow: mixHex(tint, "#000000", 0.45),
+      light: mixHex(tint, "#ffffff", 0.4),
+      mid: tint,
+      dark: mixHex(tint, "#000000", 0.42),
+      outline: mixHex(tint, "#000000", 0.82),
+      glint: "rgba(255,255,255,0.65)",
+      detail: bright ? "rgba(20,22,28,0.6)" : "rgba(255,255,255,0.4)",
+      eye: bright ? "#1b1d23" : "#f5f6f8",
+    };
+  }
+  return white
+    ? { shadow: "#c8c4ba", light: "#fffdf8", mid: "#e6e2d8", dark: "#a7a399", outline: "#2b2d34", glint: "rgba(255,255,255,0.8)", detail: "rgba(43,45,52,0.7)", eye: "#2b2d34" }
+    : { shadow: "#202127", light: "#666a77", mid: "#383b44", dark: "#15161a", outline: "#050506", glint: "rgba(255,255,255,0.22)", detail: "rgba(255,255,255,0.28)", eye: "#e9ebef" };
 }
 
 /** Pièce avec volume (dégradé latéral, liseré) et ombre portée cuite dans la texture. */
-export function drawPiece(canvas: HTMLCanvasElement, kind: PieceKind, color: Color) {
+export function drawPiece(canvas: HTMLCanvasElement, kind: PieceKind, color: Color, tint: string | null = null) {
   canvas.width = PIECE_TEX;
   canvas.height = PIECE_TEX;
   const ctx = canvas.getContext("2d")!;
   const white = color === "white";
+  const pal = piecePalette(white, tint);
   const s = 1.18;
   ctx.setTransform(s, 0, 0, s, (PIECE_TEX - 100 * s) / 2, 2);
   const shape = SHAPES[kind];
@@ -194,43 +232,37 @@ export function drawPiece(canvas: HTMLCanvasElement, kind: PieceKind, color: Col
   ctx.shadowColor = "rgba(0,0,0,0.55)";
   ctx.shadowBlur = 7;
   ctx.shadowOffsetY = 4;
-  ctx.fillStyle = white ? "#c8c4ba" : "#202127";
+  ctx.fillStyle = pal.shadow;
   for (const p of paths) ctx.fill(p);
   ctx.shadowColor = "transparent";
 
   // Passe 2 : volume.
   const grad = ctx.createLinearGradient(22, 0, 80, 0);
-  if (white) {
-    grad.addColorStop(0, "#fffdf8");
-    grad.addColorStop(0.45, "#e6e2d8");
-    grad.addColorStop(1, "#a7a399");
-  } else {
-    grad.addColorStop(0, "#666a77");
-    grad.addColorStop(0.45, "#383b44");
-    grad.addColorStop(1, "#15161a");
-  }
+  grad.addColorStop(0, pal.light);
+  grad.addColorStop(0.45, pal.mid);
+  grad.addColorStop(1, pal.dark);
   ctx.lineJoin = "round";
   for (const p of paths) {
     ctx.fillStyle = grad;
     ctx.fill(p);
     ctx.lineWidth = 2;
-    ctx.strokeStyle = white ? "#2b2d34" : "#050506";
+    ctx.strokeStyle = pal.outline;
     ctx.stroke(p);
   }
   // Reflet fin sur le côté éclairé.
   ctx.save();
   ctx.lineWidth = 1.2;
-  ctx.strokeStyle = white ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.22)";
+  ctx.strokeStyle = pal.glint;
   ctx.translate(1.5, 1.5);
   ctx.globalCompositeOperation = "source-atop";
   for (const p of paths.slice(1)) ctx.stroke(p);
   ctx.restore();
 
   ctx.lineWidth = 1.6;
-  ctx.strokeStyle = white ? "rgba(43,45,52,0.7)" : "rgba(255,255,255,0.28)";
+  ctx.strokeStyle = pal.detail;
   for (const d of shape.details) ctx.stroke(new Path2D(d));
   if (kind === "knight") {
-    ctx.fillStyle = white ? "#2b2d34" : "#e9ebef";
+    ctx.fillStyle = pal.eye;
     ctx.fill(new Path2D(circle(56, 31, 2.4)));
   }
 }

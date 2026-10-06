@@ -207,3 +207,77 @@ export function targetHint(shape: TargetShape | null, first: Square | null, spaw
       return "choisissez une pièce ou une case en surbrillance.";
   }
 }
+
+// ---- glisser-déposer -----------------------------------------------------------------------------
+// Le plateau ne fait que signaler « glissé de A vers B » ; ces fonctions pures décident de ce que cela signifie
+// en réutilisant la machine à états du clic (un glisser = clic sur A puis clic sur B).
+
+/** Distance (px) au-delà de laquelle un appui devient un glisser plutôt qu'un clic. */
+export const DRAG_THRESHOLD = 4;
+
+export function exceedsDragThreshold(dx: number, dy: number, threshold = DRAG_THRESHOLD): boolean {
+  return Math.hypot(dx, dy) >= threshold;
+}
+
+/** Interaction de départ d'un glisser : `idle` sans sélection, ou la compétence armée sans première case. */
+function dragBase(it: Interaction): Interaction {
+  return it.kind === "idle" ? IDLE : { kind: "skill", skill: it.skill, first: null };
+}
+
+/**
+ * Peut-on commencer à glisser depuis `square` ? Renvoie l'interaction résultante (la pièce est « prise en main »,
+ * ce qui fait apparaître ses cases légales) ou `null`. Pour une compétence, seules les cibles en deux étapes
+ * (`piece_to`, `pair`) se glissent : on tire la première pièce vers la case cible.
+ */
+export function dragStart(view: StateView, it: Interaction, square: Square): Interaction | null {
+  if (view.outcome.type !== "ongoing" || view.to_move !== view.you) return null;
+  if (it.kind === "idle") {
+    if (!view.moves.some((m) => m.from === square)) return null;
+    return { kind: "idle", selected: square };
+  }
+  const targets = skillTargets(view, it.skill);
+  const shape = targets[0]?.kind;
+  if (shape !== "piece_to" && shape !== "pair") return null;
+  if (!firstSquares(targets).includes(square)) return null;
+  return { kind: "skill", skill: it.skill, first: square };
+}
+
+export interface DropOutcome {
+  /** Ce que le clic équivalent produirait (envoi, promotion, nouvelle interaction). */
+  result: ClickResult;
+  /**
+   * `snap` : coup simple accepté, la pièce se pose sur la case visée en attendant la réponse du serveur ;
+   * `return` : la pièce revient à sa case (dépose invalide, promotion, compétence, simple sélection).
+   */
+  verdict: "snap" | "return";
+  /** Dépose sur une case non valide (le plateau joue le son d'erreur). */
+  rejected: boolean;
+}
+
+/** Relâchement de la pièce glissée de `from` sur `to`. */
+export function dropOn(view: StateView, it: Interaction, from: Square, to: Square): DropOutcome {
+  const base = dragBase(it);
+  const start = dragStart(view, base, from);
+  if (!start) return { result: { interaction: base }, verdict: "return", rejected: false };
+  if (to === from) return { result: { interaction: start }, verdict: "return", rejected: false };
+  const result = click(view, start, to);
+  const valid = result.send !== undefined || result.promotion !== undefined;
+  if (!valid) return { result: { interaction: base }, verdict: "return", rejected: true };
+  return { result, verdict: result.send?.type === "move" ? "snap" : "return", rejected: false };
+}
+
+/**
+ * Clic refusé : on joue le buzz « illegal ». Hors de notre tour (sans premove), cliquer sa propre pièce ;
+ * pendant le ciblage d'une compétence, cliquer une pièce qui n'est pas une cible valide.
+ */
+export function clickRejected(view: StateView, it: Interaction, square: Square, premoveEnabled = false): boolean {
+  if (view.outcome.type !== "ongoing") return false;
+  const piece = view.board[square];
+  if (view.to_move !== view.you) return !premoveEnabled && !!piece && piece.color === view.you;
+  if (it.kind === "skill") {
+    const targets = skillTargets(view, it.skill);
+    const valid = it.first === null ? firstSquares(targets) : [...firstSquares(targets), ...secondSquares(targets, it.first)];
+    return !!piece && !valid.includes(square);
+  }
+  return false;
+}
