@@ -22,6 +22,13 @@ import {
 
 export const BOARD_SIZE = SIZE;
 
+/** Un premove de la file, tel que dessiné ; `failed` : celui qui n'est plus jouable. */
+export interface PremoveMark {
+  from: Square;
+  to: Square;
+  failed?: boolean;
+}
+
 const MOVE_MS = 260;
 const PIECE_SCALE = 76 / PIECE_TEX;
 const KINDS: PieceKind[] = ["pawn", "knight", "bishop", "rook", "queen", "king"];
@@ -176,12 +183,13 @@ export class BoardScene extends Phaser.Scene {
   onDragStart: (square: Square) => void = () => {};
   /** Relâchement : `to` est null hors du plateau. Renvoie `snap` (la pièce se pose) ou `return` (elle revient). */
   onDrop: (from: Square, to: Square | null) => "snap" | "return" = () => "return";
-  /** Clic droit ou appui long : annule le premove. */
+  /** Clic droit ou appui long : annule tous les premoves. */
   onCancelPremove: () => void = () => {};
 
   private theme: ThemeSettings = getTheme();
   private boardKeys = new Set<string>();
-  private premove: { from: Square; to: Square; failed?: boolean } | null = null;
+  private premove: PremoveMark[] = [];
+  private premoveLabels: Phaser.GameObjects.Text[] = [];
   private premoveLayer!: Phaser.GameObjects.Graphics;
   private dragShadow!: Phaser.GameObjects.Graphics;
   private press: { square: Square; x: number; y: number; id: number | null } | null = null;
@@ -282,35 +290,62 @@ export class BoardScene extends Phaser.Scene {
     }
   }
 
-  /** Premove en attente (cases d'origine et d'arrivée teintées, flèche pointillée) ; `failed` fait clignoter. */
-  setPremove(pm: { from: Square; to: Square; failed?: boolean } | null) {
-    const was = this.premove;
-    this.premove = pm;
+  /**
+   * File de premoves (cases d'origine et d'arrivée teintées, flèches pointillées numérotées dans l'ordre).
+   * Un premove `failed` est dessiné en rouge et toute la couche clignote avant que la file ne soit vidée.
+   */
+  setPremove(list: PremoveMark[] | null) {
+    const was = this.premove.some((m) => m.failed);
+    this.premove = list ?? [];
     if (!this.ready) return;
     this.drawPremove();
-    if (pm?.failed && !was?.failed) {
-      this.tweens.killTweensOf(this.premoveLayer);
-      this.premoveLayer.setAlpha(1);
-      this.tweens.add({ targets: this.premoveLayer, alpha: 0.08, duration: 110, yoyo: true, repeat: 2 });
-    } else if (!pm?.failed) {
-      this.tweens.killTweensOf(this.premoveLayer);
-      this.premoveLayer.setAlpha(1);
+    const failed = this.premove.some((m) => m.failed);
+    const targets = [this.premoveLayer, ...this.premoveLabels];
+    this.tweens.killTweensOf(targets);
+    for (const t of targets) t.setAlpha(1);
+    if (failed && !was) {
+      this.tweens.add({ targets, alpha: 0.08, duration: 110, yoyo: true, repeat: 2 });
     }
   }
 
   private drawPremove() {
     const g = this.premoveLayer;
     g.clear();
-    const pm = this.premove;
-    if (!pm) return;
-    for (const square of [pm.from, pm.to]) {
-      const { x, y } = this.cell(square);
-      g.fillStyle(PREMOVE, 0.4).fillRect(x, y, TILE, TILE);
-      g.lineStyle(3, PREMOVE, 0.95).strokeRect(x + 2, y + 2, TILE - 4, TILE - 4);
+    for (const label of this.premoveLabels) label.destroy();
+    this.premoveLabels = [];
+    const list = this.premove;
+    if (list.length === 0) return;
+    const bad = hexToNum("#ff4d3d");
+    const squares = new Set<Square>();
+    for (const m of list) {
+      squares.add(m.from);
+      squares.add(m.to);
     }
-    const a = this.center(pm.from);
-    const b = this.center(pm.to);
-    drawDashedArrow(g, a.x, a.y, b.x, b.y, PREMOVE);
+    for (const square of squares) {
+      const { x, y } = this.cell(square);
+      const color = list.some((m) => m.failed && (m.from === square || m.to === square)) ? bad : PREMOVE;
+      g.fillStyle(color, 0.4).fillRect(x, y, TILE, TILE);
+      g.lineStyle(3, color, 0.95).strokeRect(x + 2, y + 2, TILE - 4, TILE - 4);
+    }
+    list.forEach((m, i) => {
+      const color = m.failed ? bad : PREMOVE;
+      const a = this.center(m.from);
+      const b = this.center(m.to);
+      drawDashedArrow(g, a.x, a.y, b.x, b.y, color);
+      // Pastille d'ordre dans le coin de la case d'arrivée (seulement quand il y a plusieurs premoves).
+      if (list.length < 2) return;
+      const { x, y } = this.cell(m.to);
+      const cx = x + TILE - 15;
+      const cy = y + 15;
+      g.fillStyle(0x0e0f12, 0.92).fillCircle(cx, cy, 12);
+      g.lineStyle(2, color, 1).strokeCircle(cx, cy, 12);
+      this.premoveLabels.push(
+        this.add
+          .text(cx, cy, String(i + 1), { fontFamily: MONO, fontSize: "14px", color: "#ffffff", fontStyle: "700" })
+          .setOrigin(0.5)
+          .setDepth(8.6),
+      );
+    });
   }
 
   // ---- entrée : clic, glisser-déposer, appui long ----------------------------------------------
@@ -335,7 +370,7 @@ export class BoardScene extends Phaser.Scene {
     if (square === null) return;
     this.longPressed = false;
     this.pressTimer?.remove(false);
-    this.pressTimer = this.premove
+    this.pressTimer = this.premove.length > 0
       ? this.time.delayedCall(550, () => {
           this.pressTimer = null;
           if (!this.drag) {

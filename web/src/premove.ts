@@ -1,5 +1,7 @@
-// Premoves : un coup posé pendant le tour de l'adversaire (côté client uniquement, aucun changement de protocole).
-// Logique pure, sans React ni Phaser. Les cases proposées sont purement géométriques : ni obstacles ni échecs.
+// Premoves : des coups posés à l'avance pendant le tour de l'adversaire (côté client uniquement, aucun changement
+// de protocole). On peut en empiler jusqu'à MAX_PREMOVES : chacun se pose sur la position « virtuelle » obtenue en
+// appliquant les précédents. Logique pure, sans React ni Phaser. Les cases proposées sont purement géométriques :
+// ni obstacles ni échecs.
 
 import type { Highlights, PendingPromotion } from "./interaction";
 import type { Color, Move, Piece, PieceKind, Square, StateView } from "./protocol";
@@ -10,6 +12,9 @@ export interface Premove {
   /** Promotion choisie (dame par défaut) quand le pion atteint la dernière rangée. */
   promo?: PieceKind;
 }
+
+/** Nombre maximal de premoves empilés. */
+export const MAX_PREMOVES = 10;
 
 export const PROMO_OPTIONS: PieceKind[] = ["queen", "rook", "bishop", "knight"];
 
@@ -29,6 +34,46 @@ const kingHome = (color: Color): Square => (color === "white" ? 4 : 60);
 
 /** Rangée de promotion d'un pion de `color`. */
 export const promotionRank = (color: Color) => (color === "white" ? 7 : 0);
+
+/**
+ * Applique un premove sur une copie du plateau : déplacement simple, la capture remplace, le pion promu devient
+ * `promo` (dame par défaut), le roi de deux cases depuis e1/e8 emmène sa tour. La prise en passant est ignorée.
+ * Si la pièce d'origine n'existe pas (ou n'est pas de `color`), le plateau est simplement copié.
+ */
+export function applyPremove(board: (Piece | null)[], pm: Premove, color: Color): (Piece | null)[] {
+  const next = board.slice();
+  const piece = next[pm.from];
+  if (!piece || piece.color !== color) return next;
+  next[pm.from] = null;
+  const promoted = piece.kind === "pawn" && rank(pm.to) === promotionRank(color);
+  next[pm.to] = promoted ? { ...piece, kind: pm.promo ?? "queen" } : piece;
+  if (piece.kind === "king" && pm.from === kingHome(color) && Math.abs(file(pm.to) - file(pm.from)) === 2 && rank(pm.to) === rank(pm.from)) {
+    const short = file(pm.to) > file(pm.from);
+    const rookFrom = sq(short ? 7 : 0, rank(pm.from));
+    const rookTo = sq(short ? 5 : 3, rank(pm.from));
+    const rook = next[rookFrom];
+    if (rook && rook.kind === "rook" && rook.color === color && !next[rookTo]) {
+      next[rookFrom] = null;
+      next[rookTo] = rook;
+    }
+  }
+  return next;
+}
+
+/** Plateau « virtuel » : la position réelle avec tous les premoves de la file appliqués dans l'ordre. */
+export function virtualBoard(board: (Piece | null)[], queue: Premove[], color: Color): (Piece | null)[] {
+  return queue.reduce((b, pm) => applyPremove(b, pm, color), board);
+}
+
+/** La vue dont le plateau est la position virtuelle (identique à `view` quand la file est vide). */
+export function virtualView<V extends Pick<StateView, "board" | "you">>(view: V, queue: Premove[]): V {
+  return queue.length === 0 ? view : { ...view, board: virtualBoard(view.board, queue, view.you) };
+}
+
+/** Ajoute un premove à la file (inchangée si elle est pleine). */
+export function queuePremove(queue: Premove[], pm: Premove): Premove[] {
+  return queue.length >= MAX_PREMOVES ? queue : [...queue, pm];
+}
 
 /**
  * Cases que la pièce de `from` atteindrait géométriquement. Les pièces adverses et les obstacles
@@ -121,30 +166,47 @@ export function resolvePremove(view: StateView, pm: Premove): PremoveResolution 
   return { action: "send", move: found.promo ? { from: found.from, to: found.to, promo: found.promo } : { from: found.from, to: found.to } };
 }
 
+export type QueueResolution =
+  | { action: "idle" }
+  | { action: "send"; move: Move; rest: Premove[] }
+  | { action: "fail"; reason: "not_turn" | "over" | "gone" | "illegal" };
+
+/**
+ * Au début de notre tour : le premier premove de la file est joué s'il est légal et les suivants restent en
+ * attente. S'il ne l'est pas, toute la file tombe (`fail`, comme sur chess.com).
+ */
+export function resolveQueue(view: StateView, queue: Premove[]): QueueResolution {
+  if (queue.length === 0) return { action: "idle" };
+  const r = resolvePremove(view, queue[0]);
+  if (r.action === "send") return { action: "send", move: r.move, rest: queue.slice(1) };
+  return { action: "fail", reason: r.reason };
+}
+
 export interface PremoveClick {
   /** Pièce actuellement choisie pour un premove. */
   selected: Square | null;
-  /** Nouveau premove à poser (remplace l'ancien). */
-  set?: Premove;
-  /** Choix de la pièce de promotion avant de poser le premove. */
+  /** Premove à ajouter à la file. */
+  add?: Premove;
+  /** Choix de la pièce de promotion avant d'ajouter le premove. */
   promotion?: PendingPromotion;
-  /** Annule le premove en attente. */
-  cancel?: boolean;
 }
 
-/** Machine à états des clics en mode premove (clic-clic, et dépose d'un glisser avec `selected = from`). */
+/**
+ * Machine à états des clics en mode premove (clic-clic, et dépose d'un glisser avec `selected = from`).
+ * `view` porte le plateau virtuel (voir `virtualView`) : on choisit la pièce là où elle sera.
+ */
 export function premoveClick(view: StateView, selected: Square | null, square: Square, enabled = true): PremoveClick {
   if (!premoveAllowed(view, enabled)) return { selected: null };
   if (selected !== null && premoveTargets(view.board, selected, view.you).includes(square)) {
     if (premoveNeedsPromo(view.board, selected, square)) {
       return { selected: null, promotion: { from: selected, to: square, options: PROMO_OPTIONS } };
     }
-    return { selected: null, set: { from: selected, to: square } };
+    return { selected: null, add: { from: selected, to: square } };
   }
   const mine = view.board[square];
   if (mine && mine.color === view.you && square !== selected) return { selected: square };
-  // Case non valide : on annule la sélection et le premove en attente.
-  return { selected: null, cancel: true };
+  // Case non valide : on abandonne seulement la sélection (la file reste ; Échap ou clic droit l'annule).
+  return { selected: null };
 }
 
 /** Peut-on commencer à glisser une pièce depuis `square` pour un premove ? */
