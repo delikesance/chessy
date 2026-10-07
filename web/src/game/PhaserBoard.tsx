@@ -4,6 +4,7 @@ import type { Highlights } from "../interaction";
 import type { Square, StateView } from "../protocol";
 import { getTheme, useTheme } from "../theme";
 import { BOARD_SIZE, BoardScene, type PremoveMark } from "./BoardScene";
+import { pickRenderer } from "./renderer";
 
 interface Props {
   view: StateView;
@@ -49,8 +50,8 @@ export function PhaserBoard({ view, highlights, onSquare, interactive = true, ca
       boardScene.setView(latest.current.view);
       boardScene.setHighlights(latest.current.highlights);
       scene.current = boardScene;
-      game = new Phaser.Game({
-        type: Phaser.AUTO,
+      const config = (type: number): Phaser.Types.Core.GameConfig => ({
+        type,
         parent: host.current!,
         width: BOARD_SIZE,
         height: BOARD_SIZE,
@@ -58,6 +59,16 @@ export function PhaserBoard({ view, highlights, onSquare, interactive = true, ca
         scene: boardScene,
         scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
       });
+      // Phaser.AUTO prend WebGL dès qu'un contexte existe, même s'il lui manque des extensions, puis plante :
+      // on choisit nous-mêmes, et on retente en Canvas si WebGL échoue malgré tout au démarrage.
+      if (pickRenderer() === "webgl") {
+        try {
+          game = new Phaser.Game(config(Phaser.WEBGL));
+        } catch (err) {
+          console.warn("Rendu WebGL indisponible, plateau en Canvas 2D.", err);
+        }
+      }
+      game ??= new Phaser.Game(config(Phaser.CANVAS));
       // Phaser n'écoute que le redimensionnement de la fenêtre : on le prévient aussi quand la mise en page
       // change la taille du conteneur (rotation, barre d'adresse mobile, panneaux repliés).
       if (typeof ResizeObserver !== "undefined" && host.current) {
