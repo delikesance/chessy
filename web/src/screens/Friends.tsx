@@ -46,7 +46,8 @@ function FriendsBody({ online, friends }: { online: boolean; friends: ReturnType
         <p className="eyebrow">Social</p>
         <h1 className="frd-title">Amis</h1>
       </header>
-      <div className="frd-grid">
+      {/* Téléphone : la liste, puis le détail de l'ami choisi à sa place, avec un retour vers la liste. */}
+      <div className={`frd-grid${selected !== null && current ? " has-sel" : ""}`}>
         <aside className="frd-side card" aria-label="Vos amis">
           <AddFriend online={online} />
           <Requests incoming={friends.incoming} outgoing={friends.outgoing} online={online} />
@@ -60,7 +61,11 @@ function FriendsBody({ online, friends }: { online: boolean; friends: ReturnType
               <ul className="frd-list">
                 {sorted.map((f) => (
                   <li key={f.username}>
-                    <FriendRow friend={f} active={current?.username === f.username} onSelect={() => setSelected(f.username)} />
+                    <FriendRow friend={f} active={current?.username === f.username} onSelect={() => {
+                        setSelected(f.username);
+                        if (window.matchMedia("(max-width: 960px)").matches) window.scrollTo({ top: 0 });
+                      }}
+                    />
                   </li>
                 ))}
               </ul>
@@ -70,7 +75,15 @@ function FriendsBody({ online, friends }: { online: boolean; friends: ReturnType
 
         <section className="frd-detail" aria-label="Profil de l'ami sélectionné">
           {current ? (
-            <Detail key={current.username} friend={current} online={online} />
+            <>
+              <button type="button" className="btn ghost sm frd-back" onClick={() => setSelected(null)}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" focusable="false">
+                  <path d="M15 5l-7 7 7 7" />
+                </svg>
+                Mes amis
+              </button>
+              <Detail key={current.username} friend={current} online={online} />
+            </>
           ) : (
             <div className="card frd-placeholder">
               <p className="muted">Sélectionnez un ami pour voir ses statistiques et le défier.</p>

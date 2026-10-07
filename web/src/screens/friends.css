@@ -56,7 +56,12 @@ a.frd-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .frd-guest h1 { font-size: 30px; letter-spacing: -0.02em; font-weight: 600; }
 .frd-guest-btn { display: inline-flex; align-items: center; text-decoration: none; margin-top: 8px; }
 
+.frd-back { display: none; }
+
 @media (max-width: 960px) {
+  .frd-grid:not(.has-sel) .frd-detail { display: none; }
+  .frd-grid.has-sel .frd-side { display: none; }
+  .frd-back { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; }
   .frd-page { padding: 28px 16px 56px; }
   .frd-grid { grid-template-columns: 1fr; }
   .frd-card { padding: 20px; }
