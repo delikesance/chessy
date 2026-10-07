@@ -55,7 +55,7 @@ Réglages (persistés dans `localStorage`, clé `chessy.sound`) : `{enabled: boo
 
 ### Couleurs
 Page `#/settings` (route `settings`, lien dans le menu utilisateur) : thème de plateau, jeu de pièces, couleur d'accent, sons, mode de déplacement. Persisté dans `localStorage` (`chessy.theme`), appliqué partout via variables CSS (`--accent`, `--board-light`, `--board-dark`, …) et lu par Phaser.
-Thèmes de plateau (id : clair / foncé) : `graphite` #cdd1d9/#69727f (défaut actuel), `emerald` #eeeed2/#769656, `walnut` #f0d9b5/#b58863, `ocean` #dce6f2/#5b7fa6, `amethyst` #e3d8f1/#8467b3, `coral` #fbe3d4/#d9805f.
+Thèmes de plateau (id : clair / foncé) : `glacier` #e4eaf6/#7f96c2 (défaut : cases plates, repères dans les cases, cadre à filet cyan), `graphite` #cdd1d9/#69727f, `emerald` #eeeed2/#769656, `walnut` #f0d9b5/#b58863, `ocean` #dce6f2/#5b7fa6, `amethyst` #e3d8f1/#8467b3, `coral` #fbe3d4/#d9805f.
 Jeux de pièces : `classic` (ivoire/ébène actuel), `neon` (cyan #5ce1e6 / magenta #ff5fc8), `gold` (or #f2c94c / argent #aab4c3), `ember` (rouge #ff6b5a / azur #5aa9ff).
 Accents : `blue` #8fb4ff (défaut), `violet` #b79cff, `coral` #ee8272, `amber` #eec06a, `mint` #5fd0a0, `rose` #f08fc0. Davantage de couleur dans l'interface : l'accent teinte le dernier coup, le camp au trait, les boutons au survol, l'onglet actif, les liserés ; le vert/rouge d'Elo (gain/perte) devient lisible (gain `--fam-defense`, perte `--danger`) ; les cartes de compétence prennent plus nettement la teinte de leur famille.
 
@@ -191,3 +191,13 @@ Problème corrigé : `moves` et `skill_options` étaient calculés sur la positi
 - Un coup tronqué par un piège adverse et qui laisse alors le roi en échec est refusé ; il n'est offert que parce que la vue ignore le piège (même bit, même coût).
 - Le pion ne peut pas prendre en diagonale une pièce qu'il ne voit pas (pas d'action offerte). Si, par malchance, la seule action légale réelle était une telle capture, la vue n'offre rien : le joueur perd au temps. Cas théorique.
 - Les `events` restent filtrés par `view::events` comme avant (une capture par une pièce cachée montre la case de la capture : le propriétaire de la victime doit être prévenu).
+
+
+## Interface « HUD » (design par défaut)
+
+Style jeu vidéo à plat : fond nuit bleue, plaques inclinées, coins coupés, néons, hexagones de compétence (cadre = rareté, glyphe lumineux = famille), polices Big Shoulders Display et Rajdhani. Aucune 3D, aucune image raster : tout est en CSS et en SVG.
+
+- Pièces : jeu « cburnett » de Colin M.L. Burnett (CC BY-SA 3.0), SVG dans `web/src/assets/pieces/`, jeu de pièces `cburnett` ; les anciens jeux (classique, néon, or, braise) restent disponibles dans les réglages.
+- Fin de partie : titre qui s'écrase, Elo qui monte (`ui/CountUp`), confettis (`ui/Confetti`).
+- Forge : `ui/ForgeReveal` joue une séquence de 6 s (coups de marteau, tirage de rareté, carte révélée), « Passer » la saute.
+- Les animations respectent `prefers-reduced-motion` et le réglage « animations réduites ».

@@ -5,6 +5,8 @@ import type { Color, EloChange, Outcome, PieceKind, SpawnKind } from "../../prot
 import { skillInfo } from "../../skills";
 import { navigate } from "../../router";
 import { store } from "../../store";
+import { Confetti } from "../../ui/Confetti";
+import { CountUp } from "../../ui/CountUp";
 import { PieceIcon, SkillArt } from "../../ui/SkillArt";
 
 const PROMO_LABEL: Record<string, string> = { queen: "Dame", rook: "Tour", bishop: "Fou", knight: "Cavalier" };
@@ -116,7 +118,8 @@ export function ResultPanel({ outcome, you, rated, solo = false, elo, rematch, o
   }, []);
 
   return (
-    <div className="gm-veil" role="dialog" aria-modal="true" aria-labelledby="res-title">
+    <div className="gm-veil gm-veil-result" role="dialog" aria-modal="true" aria-labelledby="res-title">
+      {result === "win" && <Confetti />}
       <div className={`gm-result card ${result ?? ""}`}>
         <p className="eyebrow">Partie terminée</p>
         <h2 id="res-title" className="gm-result-title">
@@ -128,7 +131,7 @@ export function ResultPanel({ outcome, you, rated, solo = false, elo, rematch, o
           <p className="muted gm-elo-none">Partie d'entraînement : ni Elo ni récompense en jeu.</p>
         ) : rated && elo && delta !== null ? (
           <div className="gm-elo">
-            <span className="gm-elo-delta mono">{formatDelta(delta)}</span>
+            <CountUp className="gm-elo-delta mono" to={delta} format={formatDelta} />
             <span className="muted">
               Nouvel Elo <strong className="mono gm-elo-new">{elo.you_after}</strong>
             </span>

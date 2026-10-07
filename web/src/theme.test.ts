@@ -3,21 +3,21 @@ import { ACCENTS, applyTheme, BOARD_THEMES, luminance, mixHex, PIECE_SETS, premo
 
 describe("theme", () => {
   it("contient les thèmes de la spec", () => {
-    expect(BOARD_THEMES.map((b) => b.id)).toEqual(["obsidian", "graphite", "emerald", "walnut", "ocean", "amethyst", "coral"]);
-    expect(BOARD_THEMES[0]).toMatchObject({ light: "#33496a", dark: "#15233b" });
+    expect(BOARD_THEMES.map((b) => b.id)).toEqual(["glacier", "graphite", "emerald", "walnut", "ocean", "amethyst", "coral"]);
+    expect(BOARD_THEMES[0]).toMatchObject({ light: "#e4eaf6", dark: "#7f96c2" });
     expect(BOARD_THEMES[1]).toMatchObject({ light: "#cdd1d9", dark: "#69727f" });
-    expect(PIECE_SETS.map((p) => p.id)).toEqual(["hextech", "classic", "neon", "gold", "ember"]);
-    expect(ACCENTS.map((a) => a.id)).toEqual(["gold", "blue", "violet", "coral", "amber", "mint", "rose"]);
-    expect(ACCENTS[0].color).toBe("#e3c98a");
-    expect(ACCENTS[1].color).toBe("#8fb4ff");
+    expect(PIECE_SETS.map((p) => p.id)).toEqual(["cburnett", "classic", "neon", "gold", "ember"]);
+    expect(ACCENTS.map((a) => a.id)).toEqual(["cyan", "gold", "blue", "violet", "coral", "amber", "mint", "rose"]);
+    expect(ACCENTS[0].color).toBe("#3de0ff");
+    expect(ACCENTS[2].color).toBe("#8fb4ff");
   });
 
   it("assainit les valeurs inconnues", () => {
     expect(sanitizeTheme(null)).toEqual(THEME_DEFAULTS);
     expect(sanitizeTheme({ board: "nope", pieces: "gold", accent: 3, move: "click", premove: false })).toMatchObject({
-      board: "obsidian",
+      board: "glacier",
       pieces: "gold",
-      accent: "gold",
+      accent: "cyan",
       move: "click",
       premove: false,
     });

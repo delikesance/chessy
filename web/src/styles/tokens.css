@@ -1,54 +1,51 @@
-/* Design « hextech » : bleu nuit, or fin, cristal turquoise. Jetons partagés. Ne pas redéfinir ailleurs. */
-@import "@fontsource/cinzel/600.css";
-@import "@fontsource/cinzel/700.css";
-@import "@fontsource/barlow/500.css";
-@import "@fontsource/barlow/600.css";
-@import "@fontsource/barlow/700.css";
-@import "@fontsource/barlow-condensed/600.css";
-@import "@fontsource/barlow-condensed/700.css";
-@import "@fontsource/barlow-condensed/800.css";
+/* Design « HUD » : nuit bleue, plaques inclinées, néons, couleur seulement quand elle dit quelque chose. Jetons partagés. */
+@import "@fontsource/big-shoulders-display/700";
+@import "@fontsource/big-shoulders-display/800";
+@import "@fontsource/big-shoulders-display/900";
+@import "@fontsource/rajdhani/500.css";
+@import "@fontsource/rajdhani/600.css";
+@import "@fontsource/rajdhani/700.css";
 
 :root {
-  --bg: #010a13;
-  --surface: #0d1626;
-  --surface-2: #121e33;
-  --surface-3: #1a2a45;
-  --sunken: #050c18;
-  --line: #1c2840;
-  --line-2: #3a3320;
-  --line-3: #785a28;
-  --text: #f0e6d2;
-  --text-2: #d6cdb8;
-  --muted: #a09b8c;
-  --faint: #8a90a0;
-  --accent: #e3c98a;
-  --danger: #ef7a8a;
-  --warn: #e3b25e;
-  --gold: #c8aa6e;
-  --gold-hi: #f0e6d2;
-  --gold-ui: #9a7a3c;
-  --hex: #0ac8b9;
+  --bg: #070a12;
+  --surface: #0f1727;
+  --surface-2: #152038;
+  --surface-3: #1c2b4a;
+  --sunken: #05080f;
+  --line: #1f2c47;
+  --line-2: #2b3a5a;
+  --line-3: #4a6296;
+  --text: #eaf1ff;
+  --text-2: #cdd9ef;
+  --muted: #9fb0cc;
+  --faint: #7f90ae;
+  --accent: #3de0ff;
+  --danger: #ff6b78;
+  --warn: #ffc23d;
+  --hot: #ff4d5e;
+  --cyan: #3de0ff;
+  --gold: #ffc23d;
 
-  /* Rareté des compétences : gris, jade, bleu, violet, or. */
-  --rar-common: #8b93a3;
-  --rar-uncommon: #78b36e;
-  --rar-rare: #3c8cf0;
-  --rar-epic: #a56bf5;
-  --rar-legendary: #e8c06a;
-  /* Familles : rouge, turquoise, bleu glacier, orchidée, orange. */
+  /* Rareté : gris, turquoise, bleu, violet, or ; le nombre de gemmes double la couleur. */
+  --rar-common: #9aa7bd;
+  --rar-uncommon: #35d6c4;
+  --rar-rare: #4c8dff;
+  --rar-epic: #b05cff;
+  --rar-legendary: #ffb02e;
+  /* Familles : rouge, turquoise, bleu clair, lilas, orange. */
   --fam-attack: #ff6b6b;
-  --fam-defense: #0ac8b9;
-  --fam-mobility: #9fd0ff;
-  --fam-control: #d28bd6;
-  --fam-create: #ff9d4a;
+  --fam-defense: #4dd0e1;
+  --fam-mobility: #8fb4ff;
+  --fam-control: #d28bff;
+  --fam-create: #ffb86b;
 
-  --font-sans: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "Barlow Condensed", "Barlow", system-ui, sans-serif;
-  --font-display: "Cinzel", Georgia, serif;
+  --font-sans: "Rajdhani", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Rajdhani", system-ui, sans-serif;
+  --font-display: "Big Shoulders Display", "Rajdhani", Impact, sans-serif;
   --font-glyph: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", sans-serif;
 
-  --radius-s: 4px;
-  --radius: 6px;
-  --radius-l: 8px;
+  --radius-s: 3px;
+  --radius: 4px;
+  --radius-l: 6px;
   color-scheme: dark;
 }

@@ -10,15 +10,11 @@ export const SIZE = BOARD_PX + FRAME * 2;
 export interface BoardColors {
   light: string;
   dark: string;
+  /** Plateau moderne : cases plates, sans grain de pierre. */
+  flat?: boolean;
 }
 
 export const DEFAULT_BOARD: BoardColors = { light: "#cdd1d9", dark: "#69727f" };
-
-/** Rendus du jeu « hextech » (damier d'obsidienne, cadre d'or) : images déjà chargées par la scène. */
-export interface BoardSkin {
-  squares: CanvasImageSource;
-  frame: CanvasImageSource;
-}
 
 /** Générateur pseudo-aléatoire déterministe : la pierre est identique à chaque partie. */
 function mulberry32(seed: number) {
@@ -39,11 +35,11 @@ function shade(hex: string, amount: number): string {
 }
 
 /** Cadre usiné + 64 cases de pierre + coordonnées dans les cases. */
-export function drawBoard(canvas: HTMLCanvasElement, orientation: Color, colors: BoardColors = DEFAULT_BOARD, skin: BoardSkin | null = null) {
+export function drawBoard(canvas: HTMLCanvasElement, orientation: Color, colors: BoardColors = DEFAULT_BOARD) {
   canvas.width = SIZE;
   canvas.height = SIZE;
   const ctx = canvas.getContext("2d")!;
-  if (skin) return drawSkinBoard(ctx, orientation, skin);
+  if (colors.flat) return drawFlatBoard(ctx, orientation, colors);
   const rnd = mulberry32(1337);
 
   // Cadre : dégradé sombre, filet clair, chanfrein intérieur.
@@ -127,81 +123,35 @@ export function drawBoard(canvas: HTMLCanvasElement, orientation: Color, colors:
   ctx.fillRect(FRAME, FRAME, BOARD_PX, 10);
 }
 
-/** Plateau « hextech » : 64 cases d'obsidienne (rendu), cadre d'or en 9 tranches, coordonnées gravées dans les cases. */
-function drawSkinBoard(ctx: CanvasRenderingContext2D, orientation: Color, skin: BoardSkin) {
-  ctx.fillStyle = "#050b15";
+/** Plateau moderne : cases plates, cadre sombre à filet cyan, repères dans les cases (sombres sur clair, clairs sur sombre). */
+function drawFlatBoard(ctx: CanvasRenderingContext2D, orientation: Color, colors: BoardColors) {
+  ctx.fillStyle = "#0b1226";
   ctx.fillRect(0, 0, SIZE, SIZE);
-  ctx.save();
-  if (orientation === "black") {
-    // Les cases sont symétriques par rotation de 180° : la couleur de chaque case reste correcte.
-    ctx.translate(SIZE, SIZE);
-    ctx.rotate(Math.PI);
-    ctx.translate(FRAME, FRAME);
-  } else {
-    ctx.translate(FRAME, FRAME);
-  }
-  ctx.drawImage(skin.squares, 0, 0, BOARD_PX, BOARD_PX);
-  ctx.restore();
-  // Ombre intérieure du cadre sur les cases.
-  const edge = ctx.createLinearGradient(0, FRAME, 0, FRAME + 16);
-  edge.addColorStop(0, "rgba(0,0,0,0.5)");
-  edge.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = edge;
-  ctx.fillRect(FRAME, FRAME, BOARD_PX, 16);
-  const edgeL = ctx.createLinearGradient(FRAME, 0, FRAME + 16, 0);
-  edgeL.addColorStop(0, "rgba(0,0,0,0.42)");
-  edgeL.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = edgeL;
-  ctx.fillRect(FRAME, FRAME, 16, BOARD_PX);
-  // Cadre : image 144 px dont la bordure fait 36 px, redimensionnée à FRAME px.
-  const img = skin.frame;
-  const w = (img as HTMLImageElement).naturalWidth || (img as HTMLCanvasElement).width || 144;
-  const b = (w / 144) * 36;
-  const c = FRAME;
-  const mid = w - 2 * b;
-  ctx.drawImage(img, 0, 0, b, b, 0, 0, c, c);
-  ctx.drawImage(img, w - b, 0, b, b, SIZE - c, 0, c, c);
-  ctx.drawImage(img, 0, w - b, b, b, 0, SIZE - c, c, c);
-  ctx.drawImage(img, w - b, w - b, b, b, SIZE - c, SIZE - c, c, c);
-  ctx.drawImage(img, b, 0, mid, b, c, 0, SIZE - 2 * c, c);
-  ctx.drawImage(img, b, w - b, mid, b, c, SIZE - c, SIZE - 2 * c, c);
-  ctx.drawImage(img, 0, b, b, mid, 0, c, c, SIZE - 2 * c);
-  ctx.drawImage(img, w - b, b, b, mid, SIZE - c, c, c, SIZE - 2 * c);
-  // Coordonnées.
-  ctx.font = '700 17px "Barlow Condensed", "Geist Mono Variable", ui-monospace, monospace';
+  ctx.strokeStyle = "rgba(61,224,255,0.7)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(FRAME - 5, FRAME - 5, BOARD_PX + 10, BOARD_PX + 10);
+  ctx.font = '700 17px "Rajdhani", "Barlow Condensed", system-ui, sans-serif';
   ctx.textBaseline = "top";
-  ctx.fillStyle = "#e3d9c0";
-  ctx.shadowColor = "rgba(0,0,0,0.85)";
-  ctx.shadowBlur = 2;
-  ctx.shadowOffsetY = 1;
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const file = orientation === "white" ? col : 7 - col;
-      const rank = orientation === "white" ? 7 - row : row;
       const x = FRAME + col * TILE;
       const y = FRAME + row * TILE;
+      const file = orientation === "white" ? col : 7 - col;
+      const rank = orientation === "white" ? 7 - row : row;
+      const light = (file + rank) % 2 === 1;
+      ctx.fillStyle = light ? colors.light : colors.dark;
+      ctx.fillRect(x, y, TILE, TILE);
+      ctx.fillStyle = light ? "#5a6f99" : "#eaf0fb";
       if (col === 0) {
         ctx.textAlign = "left";
         ctx.fillText(String(rank + 1), x + 6, y + 5);
       }
       if (row === 7) {
         ctx.textAlign = "right";
-        ctx.fillText("abcdefgh"[file], x + TILE - 6, y + TILE - 18);
+        ctx.fillText("abcdefgh"[file], x + TILE - 6, y + TILE - 20);
       }
     }
   }
-}
-
-/** Pièce rendue en 3D (sprite 256×288) posée dans la texture carrée : le socle près du bas, ombre cuite dans l'image. */
-export function drawSpritePiece(canvas: HTMLCanvasElement, img: CanvasImageSource) {
-  canvas.width = PIECE_TEX;
-  canvas.height = PIECE_TEX;
-  const ctx = canvas.getContext("2d")!;
-  ctx.imageSmoothingQuality = "high";
-  const w = (img as HTMLImageElement).naturalWidth || 256;
-  const h = (img as HTMLImageElement).naturalHeight || 288;
-  const k = PIECE_TEX / h;
-  ctx.drawImage(img, (PIECE_TEX - w * k) / 2, 0, w * k, PIECE_TEX);
 }
 
 // ---- pièces -------------------------------------------------------------------
@@ -262,7 +212,7 @@ const SHAPES: Record<PieceKind, Shape> = {
   },
 };
 
-/** Les pièces sont dessinées en 256 px (rendus 3D du jeu « hextech ») ; le dessin vectoriel est mis à l'échelle. */
+/** Les pièces sont dessinées en 256 px ; le dessin vectoriel est mis à l'échelle. */
 export const PIECE_TEX = 256;
 
 /** Clé de texture : l'ensemble classique garde les clés d'origine. */

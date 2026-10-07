@@ -3,7 +3,7 @@ import { exceedsDragThreshold, type Highlights } from "../interaction";
 import type { ActiveEffect, Color, EffectKind, GameEvent, Piece, PieceKind, SkillId, SkillTarget, Square, StateView, Terrain } from "../protocol";
 import { FX, drawArrow, drawDashedArrow, drawEffectMark, drawDashedRing, drawHalo, drawHexRing, drawRune, drawShield, drawStrings, effectColor } from "./fx";
 import { skillEntry } from "../catalog";
-import { HEX_FRAME_KEY, HEX_SQUARES_KEY, hexSourceKey, hextechAssets } from "./hextech";
+import { pieceArtAssets, pieceArtKey } from "./pieceArt";
 import { isForgedId } from "../forged";
 import { actionKey, turnsLeft } from "./logic";
 import { accentColor, boardTheme, getTheme, hexToNum, pieceSet, premoveColor, type ThemeSettings } from "../theme";
@@ -18,7 +18,6 @@ import {
   TILE,
   drawBoard,
   drawPiece,
-  drawSpritePiece,
   drawRock,
   drawStonePiece,
   pieceKey,
@@ -35,7 +34,7 @@ export interface PremoveMark {
 }
 
 const MOVE_MS = 260;
-const PIECE_SCALE = 80 / PIECE_TEX;
+const PIECE_SCALE = 78 / PIECE_TEX;
 const KINDS: PieceKind[] = ["pawn", "knight", "bishop", "rook", "queen", "king"];
 const MONO = '"Geist Mono Variable", "Geist Mono", ui-monospace, monospace';
 
@@ -207,7 +206,7 @@ export class BoardScene extends Phaser.Scene {
   }
 
   preload() {
-    for (const [key, url] of hextechAssets()) this.load.image(key, url);
+    for (const [key, url] of pieceArtAssets()) this.load.image(key, url);
   }
 
   create() {
@@ -292,8 +291,8 @@ export class BoardScene extends Phaser.Scene {
         if (this.textures.exists(key)) continue;
         const tex = this.textures.createCanvas(key, PIECE_TEX, PIECE_TEX);
         if (!tex) continue;
-        const sprite = setId === "hextech" ? this.textures.get(hexSourceKey(color, kind)) : null;
-        if (sprite && sprite.key !== "__MISSING") drawSpritePiece(tex.getSourceImage() as HTMLCanvasElement, sprite.getSourceImage() as HTMLImageElement);
+        const art = setId === "cburnett" ? this.textures.get(pieceArtKey(color, kind)) : null;
+        if (art && art.key !== "__MISSING") (tex.getSourceImage() as HTMLCanvasElement).getContext("2d")!.drawImage(art.getSourceImage() as HTMLImageElement, 0, 0, PIECE_TEX, PIECE_TEX);
         else drawPiece(tex.getSourceImage() as HTMLCanvasElement, kind, color, color === "white" ? set.white : set.black);
         tex.refresh();
       }
@@ -625,13 +624,7 @@ export class BoardScene extends Phaser.Scene {
     if (!this.textures.exists(key)) {
       const tex = this.textures.createCanvas(key, SIZE, SIZE);
       if (tex) {
-        const squares = this.textures.get(HEX_SQUARES_KEY);
-        const frame = this.textures.get(HEX_FRAME_KEY);
-        const skin =
-          this.theme.board === "obsidian" && squares.key !== "__MISSING" && frame.key !== "__MISSING"
-            ? { squares: squares.getSourceImage() as HTMLImageElement, frame: frame.getSourceImage() as HTMLImageElement }
-            : null;
-        drawBoard(tex.getSourceImage() as HTMLCanvasElement, this.orientation, colors, skin);
+        drawBoard(tex.getSourceImage() as HTMLCanvasElement, this.orientation, colors);
         tex.refresh();
         this.boardKeys.add(key);
       }

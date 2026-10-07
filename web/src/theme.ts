@@ -2,13 +2,13 @@
 // Persisté dans `chessy.theme`, appliqué à la racine du document via des variables CSS et lu par Phaser.
 import { useSyncExternalStore } from "react";
 
-export type BoardThemeId = "obsidian" | "graphite" | "emerald" | "walnut" | "ocean" | "amethyst" | "coral";
-export type PieceSetId = "hextech" | "classic" | "neon" | "gold" | "ember";
-export type AccentId = "gold" | "blue" | "violet" | "coral" | "amber" | "mint" | "rose";
+export type BoardThemeId = "glacier" | "graphite" | "emerald" | "walnut" | "ocean" | "amethyst" | "coral";
+export type PieceSetId = "cburnett" | "classic" | "neon" | "gold" | "ember";
+export type AccentId = "cyan" | "gold" | "blue" | "violet" | "coral" | "amber" | "mint" | "rose";
 export type MoveMode = "drag" | "click";
 
-export const BOARD_THEMES: { id: BoardThemeId; label: string; light: string; dark: string }[] = [
-  { id: "obsidian", label: "Obsidienne", light: "#33496a", dark: "#15233b" },
+export const BOARD_THEMES: { id: BoardThemeId; label: string; light: string; dark: string; flat?: boolean }[] = [
+  { id: "glacier", label: "Glacier", light: "#e4eaf6", dark: "#7f96c2", flat: true },
   { id: "graphite", label: "Graphite", light: "#cdd1d9", dark: "#69727f" },
   { id: "emerald", label: "Émeraude", light: "#eeeed2", dark: "#769656" },
   { id: "walnut", label: "Noyer", light: "#f0d9b5", dark: "#b58863" },
@@ -19,7 +19,7 @@ export const BOARD_THEMES: { id: BoardThemeId; label: string; light: string; dar
 
 /** `white`/`black` : couleurs de base des deux camps ; `null` = ivoire/ébène d'origine. */
 export const PIECE_SETS: { id: PieceSetId; label: string; white: string | null; black: string | null }[] = [
-  { id: "hextech", label: "Hextech", white: null, black: null },
+  { id: "cburnett", label: "Staunton", white: null, black: null },
   { id: "classic", label: "Classique", white: null, black: null },
   { id: "neon", label: "Néon", white: "#5ce1e6", black: "#ff5fc8" },
   { id: "gold", label: "Or et argent", white: "#f2c94c", black: "#aab4c3" },
@@ -27,6 +27,7 @@ export const PIECE_SETS: { id: PieceSetId; label: string; white: string | null; 
 ];
 
 export const ACCENTS: { id: AccentId; label: string; color: string }[] = [
+  { id: "cyan", label: "Cyan", color: "#3de0ff" },
   { id: "gold", label: "Or", color: "#e3c98a" },
   { id: "blue", label: "Bleu", color: "#8fb4ff" },
   { id: "violet", label: "Violet", color: "#b79cff" },
@@ -47,13 +48,14 @@ export interface ThemeSettings {
 }
 
 export const THEME_KEY = "chessy.theme";
-/** Réglages enregistrés avant le jeu « hextech » : le décor par défaut change une fois, puis le choix du joueur reprend. */
+/** Réglages enregistrés avant l'interface « HUD » : le décor par défaut change une fois, puis le choix du joueur reprend. */
 const THEME_SKIN_KEY = "chessy.theme.skin";
+const THEME_SKIN = "hud";
 
 export const THEME_DEFAULTS: ThemeSettings = {
-  board: "obsidian",
-  pieces: "hextech",
-  accent: "gold",
+  board: "glacier",
+  pieces: "cburnett",
+  accent: "cyan",
   move: "drag",
   reduceMotion: false,
   premove: true,
@@ -119,8 +121,8 @@ function read(): ThemeSettings {
   const defaults = systemDefaults();
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(THEME_KEY) : null;
-    if (raw && typeof localStorage !== "undefined" && !localStorage.getItem(THEME_SKIN_KEY)) {
-      localStorage.setItem(THEME_SKIN_KEY, "hextech");
+    if (raw && typeof localStorage !== "undefined" && localStorage.getItem(THEME_SKIN_KEY) !== THEME_SKIN) {
+      localStorage.setItem(THEME_SKIN_KEY, THEME_SKIN);
       const old = sanitizeTheme(JSON.parse(raw), defaults);
       return { ...old, board: defaults.board, pieces: defaults.pieces, accent: defaults.accent };
     }
@@ -157,7 +159,7 @@ export function setTheme(patch: Partial<ThemeSettings>) {
   current = sanitizeTheme({ ...current, ...patch });
   try {
     localStorage.setItem(THEME_KEY, JSON.stringify(current));
-    localStorage.setItem(THEME_SKIN_KEY, "hextech");
+    localStorage.setItem(THEME_SKIN_KEY, THEME_SKIN);
   } catch {
     // Mode privé : le thème ne survit pas à la session.
   }
