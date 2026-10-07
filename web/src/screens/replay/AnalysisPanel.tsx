@@ -1,6 +1,6 @@
 import type { Analysis, Color, GameRecord } from "../../protocol";
 import { seatName } from "../../replay/frames";
-import { formatAccuracy, LABEL_ORDER, LABEL_SHORT, summarySentence } from "../../replay/labels";
+import { formatAccuracy, LABEL_MEANING, LABEL_ORDER, LABEL_SHORT, summarySentence } from "../../replay/labels";
 import { LabelChip } from "./MoveList";
 
 export type AnalysisState =
@@ -34,6 +34,27 @@ function DepthPicker({ depth, onDepth, disabled }: { depth: number; onDepth: (d:
         ))}
       </div>
     </div>
+  );
+}
+
+/** Lexique : ce que veulent dire les étiquettes et comment la perte se mesure. */
+function Legend() {
+  return (
+    <details className="rp-legend">
+      <summary>Que signifient ces étiquettes ?</summary>
+      <p className="muted rp-help">
+        Le moteur compare chaque coup au meilleur coup possible. L'écart se compte en pions : un pion d'avantage vaut 1,0. Plus l'écart est grand, plus
+        l'étiquette est sévère.
+      </p>
+      <ul className="rp-legend-list">
+        {LABEL_ORDER.map((label) => (
+          <li key={label}>
+            <LabelChip label={label} />
+            <span>{LABEL_MEANING[label]}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -85,6 +106,7 @@ export function AnalysisPanel({ record, state, depth, onDepth, onAnalyse, onCanc
       {(state.status === "idle" || state.status === "error") && (
         <>
           {state.status === "idle" && <p className="muted rp-help">Le moteur note chaque coup (meilleur, bon, imprécision, erreur, gaffe) et calcule la précision de chaque joueur.</p>}
+          <Legend />
           <DepthPicker depth={depth} onDepth={onDepth} />
           <button type="button" className="btn pri rp-wide" onClick={onAnalyse} disabled={noMoves}>
             {state.status === "error" ? "Réessayer l'analyse" : "Analyser la partie"}
@@ -126,6 +148,7 @@ export function AnalysisPanel({ record, state, depth, onDepth, onAnalyse, onCanc
             {white} : {summarySentence(state.data.summary.white)}.<br />
             {black} : {summarySentence(state.data.summary.black)}.
           </p>
+          <Legend />
           <details className="rp-redo">
             <summary>Relancer à une autre profondeur</summary>
             <DepthPicker depth={depth} onDepth={onDepth} />

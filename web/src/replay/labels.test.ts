@@ -3,6 +3,9 @@ import { fixtureAnalysis, fixtureRecord } from "./fixtures";
 import {
   analysisByPly,
   bestMoveSentence,
+  explainSentence,
+  formatLoss,
+  LABEL_MEANING,
   formatAccuracy,
   formatEval,
   isLabel,
@@ -116,5 +119,39 @@ describe("résumé", () => {
     expect(analysis.accuracy.black).toBeGreaterThan(analysis.accuracy.white);
     expect(analysis.accuracy.white).toBeGreaterThanOrEqual(0);
     expect(analysis.accuracy.black).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("explications", () => {
+  const move = { ply: 3, color: "white", notation: "Fg5" } as never;
+  const ply = (label: string, loss_cp: number, eval_cp: number) => ({ ply: 3, eval_cp, best: null, loss_cp, label }) as never;
+
+  it("accorde la perte en pions", () => {
+    expect(formatLoss(30)).toBe("0,3 pion");
+    expect(formatLoss(150)).toBe("1,5 pion");
+    expect(formatLoss(240)).toBe("2,4 pions");
+    expect(formatLoss(2500)).toBe("presque toute la partie");
+  });
+
+  it("explique chaque étiquette, avec les pions perdus", () => {
+    expect(explainSentence(move, undefined)).toBeNull();
+    expect(explainSentence(move, ply("best", 0, 40))).toContain("plus fort");
+    expect(explainSentence(move, ply("good", 30, 40))).toContain("0,3 pion");
+    expect(explainSentence(move, ply("inaccuracy", 90, 40))).toContain("0,9 pion");
+    expect(explainSentence(move, ply("mistake", 210, -150))).toContain("2,1 pions");
+    expect(explainSentence(move, ply("blunder", 520, -600))).toMatch(/^Gaffe : ce coup fait perdre 5,2 pions/);
+  });
+
+  it("signale un mat forcé du point de vue de celui qui a joué", () => {
+    expect(explainSentence(move, ply("best", 0, 2000))).toContain("mat forcé");
+    expect(explainSentence(move, ply("blunder", 2500, -2000))).toContain("mat forcé");
+    // Les noirs jouent : une évaluation de +2000 (pour les blancs) est leur défaite.
+    const black = { ply: 4, color: "black", notation: "Dh4" } as never;
+    expect(explainSentence(black, ply("blunder", 2500, 2000))).toContain("mat forcé");
+    expect(explainSentence(black, ply("mistake", 400, 300))).not.toContain("mat forcé");
+  });
+
+  it("a une définition pour chaque étiquette", () => {
+    for (const l of LABEL_ORDER) expect(LABEL_MEANING[l].length).toBeGreaterThan(20);
   });
 });

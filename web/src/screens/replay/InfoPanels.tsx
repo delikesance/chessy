@@ -1,6 +1,6 @@
 import type { BestMove, MoveInfo, PlyAnalysis } from "../../protocol";
 import { currentResponse, exploreErrorText, lineEntries, MAX_LINE, type ExploreState } from "../../replay/explore";
-import { bestMoveSentence, formatEval, type Subject } from "../../replay/labels";
+import { bestMoveSentence, explainSentence, formatEval, type Subject } from "../../replay/labels";
 import { COLOR_FR } from "../../replay/frames";
 import { LabelChip } from "./MoveList";
 
@@ -22,6 +22,7 @@ interface MovePanelProps {
 /** Ce qui s'est passé au dernier coup : phrase « Vous avez joué X ; le meilleur coup était Y (+0,8) ». */
 export function MovePanel({ move, analysis, subject, evalCp, bestHere, showBest, onShowBest, onSeeAlternative }: MovePanelProps) {
   const sentence = move ? bestMoveSentence(move, analysis, subject) : null;
+  const why = move ? explainSentence(move, analysis) : null;
   const alternative = !!move && !!analysis && analysis.label !== "best" && !!analysis.best && analysis.best.notation !== move.notation;
   return (
     <section className="gm-panel card rp-now" aria-labelledby="rp-now-h">
@@ -41,6 +42,7 @@ export function MovePanel({ move, analysis, subject, evalCp, bestHere, showBest,
           <p className="muted">Avant le premier coup.</p>
         )}
         {sentence && <p className="rp-sentence">{sentence}</p>}
+        {why && analysis && <p className={`rp-why rp-why-${analysis.label}`}>{why}</p>}
         {!analysis && move && <p className="muted rp-help">Lancez l'analyse pour voir la qualité de ce coup.</p>}
       </div>
       {alternative && (

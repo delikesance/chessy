@@ -109,6 +109,46 @@ export function bestMoveSentence(move: MoveInfo, analysis: PlyAnalysis | undefin
   return `${who} ${move.notation} ; le meilleur coup était ${best.notation} (${formatEval(best.eval_cp)}).`;
 }
 
+/** Ce que chaque étiquette veut dire, avec son seuil (perte par rapport au meilleur coup du moteur, en pions). */
+export const LABEL_MEANING: Record<AnalysisLabel, string> = {
+  best: "Le coup que le moteur aurait joué, ou presque : aucune perte.",
+  good: "Un bon coup, un peu moins fort que le meilleur : moins d'un demi-pion perdu.",
+  inaccuracy: "Un coup moins précis : entre un demi-pion et un pion et quart perdus.",
+  mistake: "Un coup qui laisse l'adversaire prendre l'avantage : jusqu'à trois pions perdus.",
+  blunder: "Un coup qui change la partie, souvent une pièce ou un mat laissé : plus de trois pions perdus.",
+};
+
+/** Perte en pions, accordée : `0,3 pion`, `1,5 pion`, `2,4 pions`. Au-delà de 10 pions, on parle de la partie. */
+export function formatLoss(cp: number): string {
+  if (cp >= 1000) return "presque toute la partie";
+  const pawns = Math.round(Math.max(0, cp) / 10) / 10;
+  const text = pawns.toFixed(1).replace(".", ",");
+  return `${text} ${pawns >= 2 ? "pions" : "pion"}`;
+}
+
+/**
+ * Petite phrase qui explique pourquoi le coup porte son étiquette : ce qu'il coûte (en pions, un pion valant 1)
+ * et, quand le moteur voit un mat, qui le gagne. `null` sans analyse de ce coup.
+ */
+export function explainSentence(move: MoveInfo, analysis: PlyAnalysis | undefined): string | null {
+  if (!analysis) return null;
+  // Évaluation du point de vue de celui qui vient de jouer.
+  const own = move.color === "white" ? analysis.eval_cp : -analysis.eval_cp;
+  const loss = formatLoss(analysis.loss_cp);
+  switch (analysis.label) {
+    case "best":
+      return own >= 2000 ? "Le meilleur coup : il mène à un mat forcé." : "Le meilleur coup : le moteur n'en voit pas de plus fort.";
+    case "good":
+      return `Bon coup : presque aussi fort que le meilleur (${loss} d'écart).`;
+    case "inaccuracy":
+      return `Imprécision : ce coup cède environ ${loss} d'avantage. Rien de grave, mais il y avait mieux.`;
+    case "mistake":
+      return `Erreur : ce coup fait perdre environ ${loss} d'avantage.${own <= -2000 ? " L'adversaire a maintenant un mat forcé." : " L'adversaire peut en profiter."}`;
+    case "blunder":
+      return `Gaffe : ce coup fait perdre ${loss} d'avantage, souvent une pièce ou un mat.${own <= -2000 ? " L'adversaire a maintenant un mat forcé." : " L'adversaire reprend nettement la main."}`;
+  }
+}
+
 /** Total de coups étiquetés « mauvais » (imprécision, erreur, gaffe) d'un camp. */
 export function mistakeTotal(counts: LabelCounts): number {
   return counts.inaccuracy + counts.mistake + counts.blunder;

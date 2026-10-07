@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Analysis, MoveInfo } from "../../protocol";
-import { analysisByPly, LABEL_GLYPH, LABEL_SHORT, LABEL_TEXT } from "../../replay/labels";
+import { analysisByPly, LABEL_GLYPH, LABEL_MEANING, LABEL_SHORT, LABEL_TEXT } from "../../replay/labels";
 import { COLOR_FR } from "../../replay/frames";
 import { SkillArt } from "../../ui/SkillArt";
 import { keepVisible } from "./scroll";
@@ -16,7 +16,7 @@ interface Props {
 /** Pastille d'étiquette : couleur + symbole + texte accessible. */
 export function LabelChip({ label, compact = false }: { label: keyof typeof LABEL_TEXT; compact?: boolean }) {
   return (
-    <span className={`lb lb-${label}`} title={LABEL_TEXT[label]}>
+    <span className={`lb lb-${label}`} title={`${LABEL_TEXT[label]} : ${LABEL_MEANING[label]}`}>
       <span aria-hidden="true">{compact ? LABEL_GLYPH[label] : `${LABEL_GLYPH[label]} ${LABEL_SHORT[label]}`}</span>
       <span className="sr-only">{LABEL_TEXT[label]}</span>
     </span>
