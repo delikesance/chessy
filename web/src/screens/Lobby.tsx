@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
 import { FAMILY_LABEL } from "../catalog";
 import { hrefFor } from "../router";
 import { skillInfo } from "../skills";
@@ -11,6 +11,9 @@ import { tileRarity } from "../ui/tileRarity";
 import { UniqueBadge } from "../ui/UniqueBadge";
 import { SoloPanel } from "./SoloPanel";
 import "./lobby.css";
+
+// three.js ne se charge qu'avec l'écran Jouer ; la pièce dessinée en SVG sert d'attente.
+const HeroPiece3D = lazy(() => import("../ui/HeroPiece3D"));
 
 const DECK_SLOTS = 7;
 
@@ -199,7 +202,9 @@ export function Lobby({ state }: { state: AppState }) {
           </div>
 
           <div className="pl-hero">
-            <HeroPiece kind={piece} className={`pl-piece${waiting ? " waiting" : ""}`} key={piece} />
+            <Suspense fallback={<HeroPiece kind={piece} className="pl-piece" />}>
+              <HeroPiece3D kind={piece} className="pl-piece" fast={waiting} />
+            </Suspense>
             <div className="pl-floor" aria-hidden="true">
               <i />
               <i />

@@ -73,7 +73,10 @@
 .pl-sub { margin-top: 6px; color: var(--muted); font-size: 15.5px; }
 .pl-hero { position: relative; width: 100%; display: grid; place-items: center; margin: 18px 0 -14px; }
 .pl-piece { position: relative; z-index: 1; width: auto; height: clamp(190px, 31vh, 290px); filter: drop-shadow(0 18px 24px color-mix(in srgb, var(--accent-deep) 45%, transparent)); animation: pl-float 5s ease-in-out infinite, pl-in 0.45s ease-out; }
-.pl-piece.waiting { animation: pl-float 1.6s ease-in-out infinite; }
+/* Pièce 3D : le canevas remplit la boîte ; la silhouette SVG reste visible le temps du chargement. */
+.pl-piece-3d { width: clamp(240px, 28vw, 360px); height: clamp(220px, 36vh, 340px); filter: none; animation: none; }
+.pl-piece-3d canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.pl-piece-3d .pl-piece-svg { position: absolute; inset: 0; margin: auto; height: 82%; width: auto; opacity: 0.5; }
 @keyframes pl-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
 @keyframes pl-in { from { opacity: 0; transform: translateY(14px) scale(0.96); } }
 /* Socle : deux anneaux elliptiques et une lueur au sol. */
@@ -116,7 +119,8 @@
   .pl-stage, .pl-left, .pl-right { grid-column: 1; grid-row: auto; }
   .pl-stage { order: -1; }
   .pl-piece { height: 170px; }
+  .pl-piece-3d { width: 220px; height: 220px; }
   .pl-beam { top: -90px; height: 520px; }
 }
-@media (prefers-reduced-motion: reduce) { .pl-piece, .pl-piece.waiting { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .pl-piece { animation: none; } }
 :root[data-motion="reduce"] .pl-piece { animation: none; }
