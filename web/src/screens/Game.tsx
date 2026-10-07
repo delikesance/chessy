@@ -78,6 +78,11 @@ export function Game({ view }: { view: StateView }) {
 
   useGameSounds(view, action, over?.outcome ?? null, stamp);
 
+  // Nouvelle partie : on repart du haut de la page (sur téléphone, la page défile et garde la position de l'écran précédent).
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view.game_id]);
+
   // A new position invalidates whatever was half-selected.
   useEffect(() => {
     setInteraction(IDLE);

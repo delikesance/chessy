@@ -11,6 +11,7 @@ export function DeckSelect({ info }: { info: DeckSelectInfo }) {
   const [left, setLeft] = useState(info.seconds);
 
   useEffect(() => {
+    window.scrollTo(0, 0);
     setPicked([]);
     setLeft(info.seconds);
     const timer = setInterval(() => setLeft((s) => Math.max(0, s - 1)), 1000);

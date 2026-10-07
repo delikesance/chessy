@@ -18,3 +18,12 @@
 .rw-hint { flex: 1; font-size: 13px; }
 .rw-foot .btn.pri { min-width: 140px; }
 @media (max-width: 560px) { .rw { padding: 20px 16px; } .rw-opts { grid-template-columns: 1fr; } }
+@media (max-width: 560px) {
+  /* Téléphone : Passer / Confirmer restent collés en bas de l'écran pendant qu'on fait défiler les compétences. */
+  .md-backdrop.rw-backdrop { padding: 8px 8px 0; }
+  .rw { margin: 0 auto 8px; }
+  .rw-foot { position: sticky; bottom: 0; z-index: 1; flex-wrap: wrap; margin: 18px -16px -20px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--surface-2); border-radius: 0 0 var(--radius-l) var(--radius-l); }
+  .rw-hint { flex: 1 1 100%; order: -1; margin: 0; }
+  .rw-hint:empty { display: none; }
+  .rw-foot .btn { flex: 1; min-width: 0; }
+}

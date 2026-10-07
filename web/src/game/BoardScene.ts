@@ -4,6 +4,7 @@ import type { ActiveEffect, Color, EffectKind, GameEvent, Piece, PieceKind, Skil
 import { FX, drawArrow, drawDashedArrow, drawEffectMark, drawDashedRing, drawHalo, drawHexRing, drawRune, drawShield, drawStrings, effectColor } from "./fx";
 import { actionKey, turnsLeft } from "./logic";
 import { accentColor, boardTheme, getTheme, hexToNum, pieceSet, premoveColor, type ThemeSettings } from "../theme";
+import { dragLift, dragScale, dragThreshold, markBoost, squareAtPoint, touchSlop } from "./touch";
 import {
   BOARD_PX,
   FRAME,
@@ -225,7 +226,15 @@ export class BoardScene extends Phaser.Scene {
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => this.handleMove(pointer));
     this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => this.handleUp(pointer));
     this.input.on("pointerupoutside", (pointer: Phaser.Input.Pointer) => this.handleUp(pointer));
-    this.events.once("shutdown", () => this.clearPress());
+    // Le plateau change d'échelle (rotation, redimensionnement) : les repères de cases s'adaptent (voir `markBoost`).
+    const onResize = () => {
+      if (this.ready) this.drawHighlights();
+    };
+    this.scale.on("resize", onResize);
+    this.events.once("shutdown", () => {
+      this.scale.off("resize", onResize);
+      this.clearPress();
+    });
     this.ready = true;
     this.applyTheme(null);
     this.render();
@@ -366,7 +375,7 @@ export class BoardScene extends Phaser.Scene {
       this.onCancelPremove();
       return;
     }
-    const square = this.squareAt(pointer.x, pointer.y);
+    const square = this.squareAt(pointer.x, pointer.y, pointer.wasTouch);
     if (square === null) return;
     this.longPressed = false;
     this.pressTimer?.remove(false);
@@ -391,10 +400,10 @@ export class BoardScene extends Phaser.Scene {
   }
 
   private handleMove(pointer: Phaser.Input.Pointer) {
-    const square = this.squareAt(pointer.x, pointer.y);
+    const square = this.squareAt(pointer.x, pointer.y, pointer.wasTouch);
     const hot = square !== null && (this.highlight.selectable.includes(square) || this.highlight.targets.includes(square));
     this.game.canvas.style.cursor = this.drag ? "grabbing" : hot ? "pointer" : "default";
-    if (this.press && !this.drag && exceedsDragThreshold(pointer.x - this.press.x, pointer.y - this.press.y)) {
+    if (this.press && !this.drag && exceedsDragThreshold(pointer.x - this.press.x, pointer.y - this.press.y, dragThreshold(pointer.wasTouch))) {
       this.pressTimer?.remove(false);
       this.pressTimer = null;
       this.startDrag(this.press, pointer);
@@ -423,7 +432,7 @@ export class BoardScene extends Phaser.Scene {
     }
     this.tweens.killTweensOf(sprite);
     this.drag = { id: press.id, from: press.square, sprite, hover: press.square };
-    sprite.setDepth(20).setScale(PIECE_SCALE * 1.14).setAlpha(1);
+    sprite.setDepth(20).setScale(PIECE_SCALE * dragScale(pointer.wasTouch)).setAlpha(1);
     this.onDragStart(press.square);
     this.updateDrag(pointer);
   }
@@ -434,9 +443,9 @@ export class BoardScene extends Phaser.Scene {
     const x = Phaser.Math.Clamp(pointer.x, FRAME, SIZE - FRAME);
     const y = Phaser.Math.Clamp(pointer.y, FRAME, SIZE - FRAME);
     // La pièce est soulevée au-dessus du doigt ; son ombre reste plus bas.
-    drag.sprite.setPosition(x, y - 12);
+    drag.sprite.setPosition(x, y - dragLift(pointer.wasTouch));
     this.dragShadow.clear().fillStyle(0x000000, 0.34).fillEllipse(x + 3, y + 24, 56, 16);
-    const hover = this.squareAt(pointer.x, pointer.y);
+    const hover = this.squareAt(pointer.x, pointer.y, pointer.wasTouch);
     if (hover !== drag.hover) {
       drag.hover = hover;
       this.drawHighlights();
@@ -446,7 +455,7 @@ export class BoardScene extends Phaser.Scene {
   private finishDrag(pointer: Phaser.Input.Pointer) {
     const drag = this.drag;
     if (!drag) return;
-    const to = this.squareAt(pointer.x, pointer.y);
+    const to = this.squareAt(pointer.x, pointer.y, pointer.wasTouch);
     this.drag = null;
     this.dragShadow.clear();
     this.game.canvas.style.cursor = "default";
@@ -553,12 +562,9 @@ export class BoardScene extends Phaser.Scene {
     return { x: x + TILE / 2, y: y + TILE / 2 };
   }
 
-  private squareAt(px: number, py: number): Square | null {
-    const col = Math.floor((px - FRAME) / TILE);
-    const row = Math.floor((py - FRAME) / TILE);
-    if (col < 0 || col > 7 || row < 0 || row > 7) return null;
-    const white = this.orientation === "white";
-    return (white ? 7 - row : row) * 8 + (white ? col : 7 - col);
+  /** Case sous un point du canvas ; au doigt, le cadre compte pour la case de bord voisine (voir `touchSlop`). */
+  private squareAt(px: number, py: number, touch = false): Square | null {
+    return squareAtPoint(px, py, this.orientation, touchSlop(touch));
   }
 
   private boardCenter() {
@@ -630,6 +636,9 @@ export class BoardScene extends Phaser.Scene {
     this.bestLayer.clear();
     const view = this.view;
     if (!view) return;
+    // Plateau réduit (téléphone) : les repères de cases s'agrandissent pour rester lisibles.
+    // (`displayScale` de Phaser = taille de dessin / taille affichée : on l'inverse.)
+    const boost = markBoost(1 / this.scale.displayScale.x);
 
     // Dernière position : cases touchées par la dernière action.
     for (const e of view.events) {
@@ -656,23 +665,29 @@ export class BoardScene extends Phaser.Scene {
       } else {
         // Case vide à choisir (Trap, Geomancy, Mirage) : un petit repère discret.
         const { x, y } = this.center(square);
-        g.fillStyle(TEXT, 0.12).fillCircle(x, y, 15);
-        g.lineStyle(2, TEXT, 0.6).strokeCircle(x, y, 15);
+        g.fillStyle(TEXT, 0.12).fillCircle(x, y, 15 * boost);
+        g.lineStyle(2 * boost, TEXT, 0.6).strokeCircle(x, y, 15 * boost);
       }
     }
     if (this.highlight.selected !== null) {
       const { x, y } = this.cell(this.highlight.selected);
-      g.fillStyle(TEXT, 0.2).fillRect(x, y, TILE, TILE);
-      g.lineStyle(3, TEXT, 0.95).strokeRect(x + 2, y + 2, TILE - 4, TILE - 4);
+      if (boost > 1) {
+        // Petit plateau : un blanc translucide se perd sur les cases claires, on prend la couleur d'accent.
+        g.fillStyle(ACCENT, 0.4).fillRect(x, y, TILE, TILE);
+        g.lineStyle(3 * boost, ACCENT, 1).strokeRect(x + 2, y + 2, TILE - 4, TILE - 4);
+      } else {
+        g.fillStyle(TEXT, 0.2).fillRect(x, y, TILE, TILE);
+        g.lineStyle(3, TEXT, 0.95).strokeRect(x + 2, y + 2, TILE - 4, TILE - 4);
+      }
     }
     for (const square of this.highlight.targets) {
       const { x, y } = this.center(square);
       if (view.board[square]) {
         g.lineStyle(6, DANGER, 0.9).strokeCircle(x, y, TILE / 2 - 5);
       } else {
-        g.fillStyle(0x0e0f12, 0.6).fillCircle(x, y, 13);
-        g.lineStyle(2.5, TEXT, 0.95).strokeCircle(x, y, 13);
-        g.fillStyle(TEXT, 0.95).fillCircle(x, y, 4);
+        g.fillStyle(0x0e0f12, 0.6).fillCircle(x, y, 13 * boost);
+        g.lineStyle(2.5 * boost, TEXT, 0.95).strokeCircle(x, y, 13 * boost);
+        g.fillStyle(TEXT, 0.95).fillCircle(x, y, 4 * boost);
       }
     }
     const hover = this.drag?.hover;
@@ -903,6 +918,7 @@ export class BoardScene extends Phaser.Scene {
         targets: sprite,
         x: hit.x,
         y: hit.y,
+        scale: S,
         duration: MOVE_MS,
         ease: "Cubic.InOut",
         onComplete: () => {
@@ -931,10 +947,12 @@ export class BoardScene extends Phaser.Scene {
       });
     } else {
       sprite.setDepth(10);
+      // `scale` : une pièce lâchée juste avant cette animation (glisser) a pu être interrompue en cours de réduction.
       this.tweens.add({
         targets: sprite,
         x: target.x,
         y: target.y,
+        scale: S,
         duration: MOVE_MS,
         ease: "Cubic.InOut",
         onComplete: () => sprite.setDepth(2),
