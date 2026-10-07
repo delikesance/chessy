@@ -2,6 +2,10 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body, #root { height: 100%; }
+/* Mobile : pas de zoom au double appui (le pincement reste possible), pas de halo gris au toucher, texte non regonflé. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* Encoche et barres système (viewport-fit=cover) : le contenu reste dans la zone sûre sur les côtés et en bas. */
+#root { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-bottom: env(safe-area-inset-bottom); }
 body {
   margin: 0;
   background: var(--bg);
@@ -138,6 +142,15 @@ a { color: inherit; }
 .presence.online { background: var(--text); }
 .presence.in_game { background: var(--warn); }
 .presence.offline { background: var(--surface); border-color: #4a505b; }
+
+/* Écrans tactiles : cibles d'au moins 40 px et champs à 16 px (en dessous, iOS zoome la page à la prise de focus). */
+@media (pointer: coarse), (max-width: 820px) {
+  .input, .gm-chat-form .input { font-size: 16px; }
+}
+@media (pointer: coarse) {
+  .btn.sm { height: 40px; }
+  .seg > button { height: 44px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }

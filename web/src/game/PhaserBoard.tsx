@@ -30,6 +30,7 @@ export function PhaserBoard({ view, highlights, onSquare, interactive = true, ca
 
   useEffect(() => {
     let game: Phaser.Game | null = null;
+    let observer: ResizeObserver | null = null;
     // Phaser tears a game down on its next frame, which never comes if it has not
     // booted yet. React StrictMode mounts, unmounts and remounts straight away, so
     // creating the game synchronously would leave a second canvas behind. Deferring
@@ -57,12 +58,19 @@ export function PhaserBoard({ view, highlights, onSquare, interactive = true, ca
         scene: boardScene,
         scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
       });
+      // Phaser n'écoute que le redimensionnement de la fenêtre : on le prévient aussi quand la mise en page
+      // change la taille du conteneur (rotation, barre d'adresse mobile, panneaux repliés).
+      if (typeof ResizeObserver !== "undefined" && host.current) {
+        observer = new ResizeObserver(() => game?.scale.refresh());
+        observer.observe(host.current);
+      }
       // Lets tests and the dev console inspect the canvas, which is not in the accessibility tree.
       if (import.meta.env.DEV) (window as unknown as { __chessy: unknown }).__chessy = { game, scene: boardScene };
     }, 0);
 
     return () => {
       clearTimeout(timer);
+      observer?.disconnect();
       scene.current = null;
       if (game) {
         game.destroy(true);

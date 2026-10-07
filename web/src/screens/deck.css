@@ -1,5 +1,5 @@
 .dk-page { max-width: 1120px; margin: 0 auto; padding: 0 24px 64px; }
-.dk-top { height: 60px; display: flex; align-items: center; border-bottom: 1px solid var(--line); margin: 0 -24px 32px; padding: 0 24px; }
+.dk-top { height: calc(60px + env(safe-area-inset-top)); display: flex; align-items: center; border-bottom: 1px solid var(--line); margin: 0 -24px 32px; padding: env(safe-area-inset-top) 24px 0; }
 .dk-head { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 22px; }
 .dk-title { font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -0.03em; margin: 8px 0 6px; font-weight: 650; }
 .dk-sub { max-width: 520px; font-size: 14.5px; }
@@ -22,7 +22,12 @@
 .dk-wait { color: var(--text-2); }
 @media (max-width: 640px) {
   .dk-page { padding: 0 16px 48px; }
-  .dk-top { margin: 0 -16px 24px; padding: 0 16px; }
+  .dk-top { margin: 0 -16px 24px; padding: env(safe-area-inset-top) 16px 0; }
   .dk-grid { grid-template-columns: 1fr; }
-  .dk-foot { flex-direction: column; align-items: stretch; text-align: center; }
+  /* Pied collant compact : le message au-dessus, puis Annuler et Valider côte à côte (au lieu de trois lignes qui mangent l'écran). */
+  .dk-foot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; margin: 24px -16px 0; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); text-align: center; }
+  .dk-foot > p { grid-column: 1 / -1; order: -1; margin: 0; font-size: 13px; }
+  .dk-foot .btn { min-width: 0; }
+  .dk-foot .btn.ghost { padding: 0 18px; }
+  .dk-foot .dk-wait { grid-column: 1 / -1; }
 }

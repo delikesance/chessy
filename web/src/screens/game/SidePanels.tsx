@@ -6,6 +6,7 @@ import { skillInfo } from "../../skills";
 import { store, type ChatLine } from "../../store";
 import { SkillArt } from "../../ui/SkillArt";
 import { UniqueBadge } from "../../ui/UniqueBadge";
+import { useCompact } from "../../ui/useCompact";
 
 interface SkillListProps {
   slots: SkillSlot[];
@@ -100,6 +101,7 @@ export function SkillList({ slots, view, myTurn, active, onToggle }: SkillListPr
                     {info.unique && <span className="tag">unique</span>}
                   </span>
                   <span className="gm-skill-status muted">{status}</span>
+                  <span className="gm-skill-desc">{info.description}</span>
                 </span>
                 <span className="gm-skill-key mono" aria-hidden="true">
                   {i + 1}
@@ -113,20 +115,48 @@ export function SkillList({ slots, view, myTurn, active, onToggle }: SkillListPr
   );
 }
 
+/**
+ * En-tête d'un panneau : titre et compteur. En mise en page compacte (téléphone) c'est un bouton qui replie le panneau
+ * (le plateau reste ainsi à portée de pouce) et, replié, il affiche un aperçu de la dernière ligne.
+ */
+function PanelHead({ id, title, count, compact, open, onToggle, peek }: { id: string; title: string; count: number; compact: boolean; open: boolean; onToggle: () => void; peek?: string }) {
+  if (!compact) {
+    return (
+      <div className="gm-panel-head">
+        <h2 id={id} className="gm-h">
+          {title}
+        </h2>
+        <span className="mono muted">{count}</span>
+      </div>
+    );
+  }
+  return (
+    <h2 id={id} className="gm-fold-h">
+      <button type="button" className="gm-fold" aria-expanded={open} onClick={onToggle}>
+        <span className="gm-h">{title}</span>
+        <span className="mono muted">{count}</span>
+        <span className="gm-fold-chev" aria-hidden="true">
+          {open ? "▴" : "▾"}
+        </span>
+        {!open && peek && <span className="gm-fold-peek muted">{peek}</span>}
+      </button>
+    </h2>
+  );
+}
+
 export function Journal({ log, you }: { log: LogLine[]; you: StateView["you"] }) {
   const end = useRef<HTMLLIElement>(null);
+  const compact = useCompact();
+  const [fold, setFold] = useState(false);
+  const open = !compact || fold;
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "nearest" });
-  }, [log.length]);
+    if (open) end.current?.scrollIntoView({ block: "nearest" });
+  }, [log.length, open]);
+  const last = log[log.length - 1];
   return (
-    <section className="gm-panel card gm-journal" aria-labelledby="gm-journal-h">
-      <div className="gm-panel-head">
-        <h2 id="gm-journal-h" className="gm-h">
-          Journal
-        </h2>
-        <span className="mono muted">{log.length}</span>
-      </div>
-      <ol className="gm-log">
+    <section className={`gm-panel card gm-journal${open ? "" : " folded"}`} aria-labelledby="gm-journal-h">
+      <PanelHead id="gm-journal-h" title="Journal" count={log.length} compact={compact} open={open} onToggle={() => setFold(!fold)} peek={last ? `${last.actor === you ? "Vous" : "Adv."} : ${last.text}` : undefined} />
+      <ol className="gm-log" hidden={!open}>
         {log.length === 0 && <li className="muted gm-empty">Aucune action pour l'instant.</li>}
         {log.map((line) => (
           <li key={line.key ?? line.ply} className={line.actor === you ? "me" : "opp"}>
@@ -214,10 +244,13 @@ const QUICK = ["Bien joué !", "Merci", "Bonne chance", "Oups…", "Belle compé
 export function Chat({ lines }: { lines: ChatLine[] }) {
   const [text, setText] = useState("");
   const list = useRef<HTMLDivElement>(null);
+  const compact = useCompact();
+  const [fold, setFold] = useState(false);
+  const open = !compact || fold;
   useEffect(() => {
     const el = list.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [lines.length]);
+  }, [lines.length, open]);
 
   const send = (t: string) => {
     const clean = t.trim();
@@ -225,11 +258,15 @@ export function Chat({ lines }: { lines: ChatLine[] }) {
   };
 
   return (
-    <section className="gm-panel card gm-chat" aria-labelledby="gm-chat-h">
-      <h2 id="gm-chat-h" className="gm-h">
-        Chat
-      </h2>
-      <div className="gm-chat-list" ref={list} role="log" aria-live="polite">
+    <section className={`gm-panel card gm-chat${open ? "" : " folded"}`} aria-labelledby="gm-chat-h">
+      {compact ? (
+        <PanelHead id="gm-chat-h" title="Chat" count={lines.length} compact open={open} onToggle={() => setFold(!fold)} peek={lines.length ? `${lines[lines.length - 1].mine ? "Vous" : "Adv."} : ${lines[lines.length - 1].text}` : "Dites bonjour"} />
+      ) : (
+        <h2 id="gm-chat-h" className="gm-h">
+          Chat
+        </h2>
+      )}
+      <div className="gm-chat-list" ref={list} role="log" aria-live="polite" hidden={!open}>
         {lines.length === 0 && <p className="muted gm-empty">Dites bonjour avec une phrase rapide.</p>}
         {lines.map((l, i) => (
           <p key={i} className={`gm-msg ${l.mine ? "me" : "opp"}`}>
@@ -238,7 +275,7 @@ export function Chat({ lines }: { lines: ChatLine[] }) {
           </p>
         ))}
       </div>
-      <div className="gm-quick">
+      <div className="gm-quick" hidden={!open}>
         {QUICK.map((q) => (
           <button key={q} type="button" className="gm-chip" onClick={() => send(q)}>
             {q}
@@ -247,6 +284,7 @@ export function Chat({ lines }: { lines: ChatLine[] }) {
       </div>
       <form
         className="gm-chat-form"
+        hidden={!open}
         onSubmit={(e) => {
           e.preventDefault();
           send(text);
