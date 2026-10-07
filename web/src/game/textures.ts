@@ -130,7 +130,7 @@ function drawFlatBoard(ctx: CanvasRenderingContext2D, orientation: Color, colors
   ctx.strokeStyle = "rgba(61,224,255,0.7)";
   ctx.lineWidth = 2;
   ctx.strokeRect(FRAME - 5, FRAME - 5, BOARD_PX + 10, BOARD_PX + 10);
-  ctx.font = '700 17px "Rajdhani", "Barlow Condensed", system-ui, sans-serif';
+  ctx.font = '700 17px "Barlow Condensed", system-ui, sans-serif';
   ctx.textBaseline = "top";
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {

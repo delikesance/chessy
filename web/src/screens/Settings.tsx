@@ -1,7 +1,7 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
 import { CATALOG, FAMILY_LABEL } from "../catalog";
 import { sfx, skillSfx, type SfxName } from "../sound";
-import { ACCENTS, BOARD_THEMES, PIECE_SETS, setTheme, useTheme, type MoveMode } from "../theme";
+import { ACCENTS, BOARD_THEMES, PIECE_SETS, setTheme, useTheme, type ColorMode, type MoveMode } from "../theme";
 import { BoardPreview } from "../ui/BoardPreview";
 import { SkillArt } from "../ui/SkillArt";
 import "./settings.css";
@@ -42,6 +42,12 @@ function Slider({ value, onChange, label, disabled }: { value: number; onChange:
     </label>
   );
 }
+
+const COLOR_MODES: { id: ColorMode; label: string }[] = [
+  { id: "system", label: "Système" },
+  { id: "light", label: "Clair" },
+  { id: "dark", label: "Sombre" },
+];
 
 /** Aperçu d'un son : ignore les interrupteurs de catégorie, jamais le réglage général. */
 const preview = (name: SfxName) => sfx.play(name, { force: true });
@@ -158,6 +164,25 @@ export function Settings() {
       <section className="card st-card st-look" aria-labelledby="st-look">
         <div className="st-look-opts">
           <h2 id="st-look" className="st-h">Apparence</h2>
+
+          <fieldset className="st-field">
+            <legend className="field-label">Mode</legend>
+            <div className="st-swatches" role="radiogroup" aria-label="Mode clair ou sombre">
+              {COLOR_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={theme.mode === m.id}
+                  className="st-swatch"
+                  data-sfx="off"
+                  onClick={() => setTheme({ mode: m.id })}
+                >
+                  <span>{m.label}</span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
 
           <fieldset className="st-field">
             <legend className="field-label">Thème du plateau</legend>
