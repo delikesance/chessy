@@ -144,7 +144,7 @@ export default function HeroPiece3D({ kind, className, fast }: { kind: HeroKind;
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const still = reducedMotion();
-      if (!still) angle += dt * (want.current.fast ? 1.8 : 0.45);
+      if (!still) angle += dt * (want.current.fast ? 2.6 : 0.9);
       pop = Math.min(1, pop + dt * 3.5);
       const ease = 1 - Math.pow(1 - pop, 3);
       mesh.rotation.y = angle;
