@@ -14,12 +14,17 @@ use common::*;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::unbounded_channel;
 
-/// Quick bot: short delays and a short search so debug builds keep up.
+/// Quick bot: short delays and a short search so debug builds keep up. The
+/// test clients answer the bot as fast as it plays, far faster than a person
+/// could, so the per-connection message quota (tested in `hardening.rs`) is
+/// lifted here: it would otherwise drop moves now and then.
 fn cfg() -> HubConfig {
     HubConfig {
         bot_delay_min: Duration::from_millis(5),
         bot_delay_max: Duration::from_millis(10),
         bot_think_max: Duration::from_millis(150),
+        msg_rate: 10_000.0,
+        msg_burst: 10_000,
         ..HubConfig::default()
     }
 }
@@ -48,7 +53,8 @@ async fn my_turn(c: &mut Client) -> Result<Value, Value> {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("no turn arrived; have {:?}", c.types());
+    let error = c.try_next("error");
+    panic!("no turn arrived; have {:?}; error {error:?}", c.types());
 }
 
 fn move_json(m: &Value) -> Value {
@@ -800,4 +806,64 @@ async fn leaving_deck_selection_puts_the_opponent_back_in_the_queue() {
     c.send(ClientMsg::QueueJoin { ranked: None });
     c.next("deck_select");
     b.next("deck_select");
+}
+
+#[tokio::test]
+async fn a_fog_skill_is_playable_in_solo_and_the_bot_plays_in_the_fog_too() {
+    use chessy_engine::forge::{Effect, Graded, Rarity, SkillDef};
+    use chessy_engine::SkillId;
+    let store = Store::open(":memory:").unwrap();
+    let graded = Graded {
+        rarity: Rarity::Common,
+        score: 1.0,
+        cost: 1.0,
+        tone: 1.0,
+        redundant: false,
+    };
+    let fog = SkillId::Forged(
+        store
+            .insert_forged(&SkillDef::new(Effect::Fog { plies: 8 }), &graded)
+            .unwrap(),
+    );
+    let mut hub = Hub::new(store.clone(), HubConfig::default());
+    let (tx, mut rx) = unbounded_channel();
+    let (me, _) = hub.connect(None, tx).unwrap();
+    store.set_deck(&me, &[fog]).unwrap();
+    hub.solo_start(&me, 800, SoloColor::White);
+    hub.select_deck(&me, vec![fog]);
+    while rx.try_recv().is_ok() {}
+
+    hub.action(
+        &me,
+        Action::Skill {
+            skill: fog,
+            target: chessy_engine::SkillTarget::None,
+        },
+    );
+    // The skill was not left out of the game: the fog is on.
+    let mut fogged = false;
+    while let Ok(m) = rx.try_recv() {
+        if let ServerMsg::State(s) = m {
+            fogged |= s
+                .effects
+                .iter()
+                .any(|e| e.kind == chessy_engine::EffectKind::Fog);
+            // The player no longer sees the bot's army, which is out of reach.
+            assert!(
+                s.board.iter().flatten().all(|p| p.color == Color::White),
+                "the player still sees the bot"
+            );
+        }
+    }
+    assert!(fogged, "the fog skill did nothing");
+
+    // The bot searches the board its own side sees: it does not see the player's army either.
+    let (_, id, ply) = bot_move_timer(&mut hub).expect("the bot answers");
+    let job = hub.bot_job(&id, ply).expect("a job");
+    assert_eq!(
+        job.game.pos.pieces(Color::White).count(),
+        0,
+        "the bot sees through the fog"
+    );
+    assert_eq!(job.game.pos.pieces(Color::Black).count(), 16);
 }

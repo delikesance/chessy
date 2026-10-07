@@ -29,9 +29,11 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
         .route("/me", get(me))
+        .route("/me/skills", get(my_skills))
         .route("/leaderboard", get(leaderboard))
         .route("/players/{username}", get(profile))
         .route("/live", get(crate::api_live::live))
+        .route("/skills/forged", get(crate::api_skills::forged))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
@@ -82,6 +84,15 @@ fn authenticate(app: &App, headers: &HeaderMap) -> ApiResult<String> {
     app.store()
         .player_by_token(token)?
         .ok_or_else(ApiError::unauthorized)
+}
+
+/// `{entries: [HistoryEntry], deck: [skill_id]}`: what the player got, forged and
+/// lost (newest first), and what they own now.
+async fn my_skills(State(app): State<Arc<App>>, headers: HeaderMap) -> ApiResult<Response> {
+    let player = authenticate(&app, &headers)?;
+    let entries = app.store().skill_history(&player)?;
+    let deck = app.store().deck(&player)?;
+    Ok(Json(json!({ "entries": entries, "deck": deck })).into_response())
 }
 
 pub fn valid_username(name: &str) -> bool {

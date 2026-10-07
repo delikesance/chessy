@@ -6,6 +6,7 @@
 
 pub mod ai;
 pub mod analysis;
+pub mod forge;
 pub mod game;
 pub mod notation;
 pub mod position;

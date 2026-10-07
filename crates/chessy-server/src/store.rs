@@ -12,6 +12,7 @@ use thiserror::Error;
 
 use crate::elo::{self, START_ELO};
 use crate::games_store::GameKind;
+use crate::history_store::{self as history, Change, Source};
 use crate::protocol::{Me, PlayerId};
 
 pub const STARTER_DECK_SIZE: usize = 3;
@@ -309,6 +310,44 @@ const MIGRATIONS: &[&str] = &[
          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
          PRIMARY KEY (game_id, depth)
      );",
+    // Forged skills (docs/spec-forge.md): a skill made up by the forge is a
+    // definition stored here and known as `forged_<id>` everywhere else. The
+    // fingerprint keeps the same definition from being stored twice (and its
+    // low 32 bits are the id, so ids never clash between databases in one
+    // process); the signature is what makes a later skill redundant with this one.
+    "CREATE TABLE forged_skill (
+         id INTEGER PRIMARY KEY,
+         fingerprint TEXT NOT NULL UNIQUE,
+         signature TEXT NOT NULL,
+         def_json TEXT NOT NULL,
+         rarity TEXT NOT NULL,
+         score REAL NOT NULL,
+         cost REAL NOT NULL,
+         tone REAL NOT NULL,
+         redundant INTEGER NOT NULL DEFAULT 0,
+         gen_version INTEGER NOT NULL,
+         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+         retired INTEGER NOT NULL DEFAULT 0
+     );
+     CREATE INDEX forged_signature ON forged_skill(signature);",
+    // The history of each player's skills (what the Collection screen shows):
+    // every gain and loss, with how it happened. Skills owned before the
+    // journal existed are entered once, dated from the account's creation.
+    "CREATE TABLE skill_history (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         player_id TEXT NOT NULL REFERENCES players(id),
+         skill TEXT NOT NULL,
+         change TEXT NOT NULL,
+         source TEXT NOT NULL,
+         other TEXT,
+         at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+     );
+     CREATE INDEX skill_history_player ON skill_history(player_id, id);
+     INSERT INTO skill_history (player_id, skill, change, source, at)
+         SELECT ps.player_id, ps.skill, 'gained', 'earlier',
+                strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at)
+         FROM player_skills ps JOIN players p ON p.id = ps.player_id
+         ORDER BY ps.rowid;",
 ];
 
 fn migrate(conn: &mut Connection) -> StoreResult<()> {
@@ -337,9 +376,11 @@ impl Store {
     pub fn open(path: &str) -> StoreResult<Self> {
         let mut conn = Connection::open(path)?;
         migrate(&mut conn)?;
-        Ok(Store {
+        let store = Store {
             conn: Arc::new(Mutex::new(conn)),
-        })
+        };
+        store.load_forged()?;
+        Ok(store)
     }
 
     /// Creates a guest holding a starter deck of random classic skills,
@@ -737,6 +778,32 @@ impl Store {
                 )?;
             }
         }
+        // The journal: who lost what, and how the winner came by the new one.
+        let winner_name = history::username_of(&tx, winner);
+        let loser_name = history::username_of(&tx, loser);
+        if let Some(skill) = loser_loses {
+            history::log(
+                &tx,
+                loser,
+                skill,
+                Change::Lost,
+                Source::Taken,
+                winner_name.as_deref(),
+            )?;
+        }
+        if let Some(skill) = winner_drops {
+            history::log(&tx, winner, skill, Change::Lost, Source::Replaced, None)?;
+        }
+        if let Some(skill) = gain {
+            let (source, other) = if skill.is_forged() {
+                (Source::Forged, None)
+            } else if loser_loses == Some(skill) {
+                (Source::Stolen, loser_name.as_deref())
+            } else {
+                (Source::Won, None)
+            };
+            history::log(&tx, winner, skill, Change::Gained, source, other)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -786,6 +853,7 @@ impl Store {
             "INSERT INTO player_skills (player_id, skill) VALUES (?1, ?2)",
             params![player, skill_name(skill)],
         )?;
+        history::log(&conn, player, skill, Change::Gained, Source::Refill, None)?;
         Ok(())
     }
 }
@@ -823,6 +891,7 @@ fn insert_guest(tx: &rusqlite::Transaction) -> StoreResult<(PlayerId, String)> {
             "INSERT INTO player_skills (player_id, skill) VALUES (?1, ?2)",
             params![id, skill_name(*skill)],
         )?;
+        history::log(tx, &id, *skill, Change::Gained, Source::Starter, None)?;
     }
     let token = insert_session(tx, &id)?;
     Ok((id, token))

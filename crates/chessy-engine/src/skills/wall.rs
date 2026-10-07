@@ -59,5 +59,15 @@ impl Skill for Wall {
             ev.push(locked);
         }
         pos.captured_pawns[color.index()] -= n as u8;
+        // The pawns are back: they must not be revivable a second time.
+        for _ in 0..n {
+            if let Some(i) = pos
+                .graveyard
+                .iter()
+                .position(|p| p.color == color && p.kind == PieceKind::Pawn)
+            {
+                pos.graveyard.remove(i);
+            }
+        }
     }
 }

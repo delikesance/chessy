@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use chessy_engine::position::king_distance;
 use chessy_engine::{
     ActiveEffect, Color, EffectKind, Event, Game, Loadout, Piece, PieceId, Position, SkillId,
     SkillTarget, Square, NEVER,
@@ -17,6 +18,9 @@ use crate::protocol::{SkillSlotView, TerrainView};
 /// the player has to see what attacks them to be able to answer it.
 pub(super) fn hidden_ids(pos: &Position, viewer: Color) -> HashSet<PieceId> {
     let mut hidden = invisible_of(pos, viewer);
+    if pos.fog() {
+        hidden.extend(fogged(pos, viewer));
+    }
     if !hidden.is_empty() && pos.side == viewer && pos.in_check(viewer) {
         hidden.retain(|&id| !gives_check(pos, viewer, id));
     }
@@ -109,6 +113,20 @@ fn invisible_of(pos: &Position, viewer: Color) -> HashSet<PieceId> {
     }
     hidden
 }
+
+/// Fog: the enemy pieces more than two squares away from every piece of
+/// `viewer`. Spectators are not fogged: they see for nobody and are already
+/// thirty seconds behind.
+fn fogged(pos: &Position, viewer: Color) -> HashSet<PieceId> {
+    let mine: Vec<Square> = pos.pieces(viewer).map(|(s, _)| s).collect();
+    pos.pieces(viewer.opposite())
+        .filter(|&(s, _)| !mine.iter().any(|&m| king_distance(m, s) <= FOG_RANGE))
+        .map(|(_, p)| p.id)
+        .collect()
+}
+
+/// How far (in king moves) a player sees through the Fog.
+const FOG_RANGE: u8 = 2;
 
 /// Pieces a spectator cannot see: the invisible ones of both sides.
 pub(super) fn spectator_hidden(pos: &Position) -> HashSet<PieceId> {
@@ -315,6 +333,41 @@ mod tests {
         mask_best_move(&game, Color::White, &mut events);
         let hint = best(&events).expect("some hint");
         assert_ne!(hint.1, sq("d5"), "{hint:?} points at the hidden queen");
+    }
+
+    #[test]
+    fn fog_hides_the_enemy_pieces_out_of_reach_of_yours() {
+        let mut pos = Position::from_fen("r3k3/8/8/8/8/3n4/8/R3K3 w - - 0 1").unwrap();
+        pos.add_global_effect(EffectKind::Fog, None, 6);
+        let far = pos.board[sq("a8") as usize].unwrap().id;
+        let near = pos.board[sq("d3") as usize].unwrap().id;
+        let white = hidden_ids(&pos, Color::White);
+        assert!(white.contains(&far), "the rook on a8 is out of sight");
+        assert!(
+            !white.contains(&near),
+            "the knight on d3 is within two of e1"
+        );
+        // Each side only sees its own surroundings.
+        let black = hidden_ids(&pos, Color::Black);
+        assert!(black.contains(&pos.board[sq("a1") as usize].unwrap().id));
+        assert!(
+            spectator_hidden(&pos).is_empty(),
+            "spectators are not fogged"
+        );
+        let seen = view_position(&pos, Color::White, &white);
+        assert!(seen.board[sq("a8") as usize].is_none());
+        assert!(seen.board[sq("d3") as usize].is_some());
+    }
+
+    #[test]
+    fn fog_does_not_hide_a_piece_that_gives_check() {
+        let mut pos = Position::from_fen("r3k3/8/8/8/8/8/8/r3K3 w - - 0 1").unwrap();
+        pos.add_global_effect(EffectKind::Fog, None, 6);
+        let checker = pos.board[sq("a1") as usize].unwrap().id;
+        let far = pos.board[sq("a8") as usize].unwrap().id;
+        let hidden = hidden_ids(&pos, Color::White);
+        assert!(!hidden.contains(&checker), "check is always announced");
+        assert!(hidden.contains(&far));
     }
 
     #[test]

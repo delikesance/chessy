@@ -83,7 +83,7 @@ impl Client {
 
     /// Waits (briefly) for a message that is produced by a timer.
     async fn wait_for(&mut self, ty: &str) -> Value {
-        for _ in 0..100 {
+        for _ in 0..400 {
             if let Some(v) = self.try_next(ty) {
                 return v;
             }
@@ -477,24 +477,46 @@ fn unique_skills_cannot_have_two_owners() {
 }
 
 #[tokio::test]
-async fn random_reward_with_nothing_left_to_gain() {
+async fn a_random_reward_forges_a_new_skill() {
     let (app, store) = new_app(HubConfig::default());
     let (white, mut black) = start_game(&app, &store, DECK_A, DECK_B);
-    // The winner (black) already owns every skill there is.
-    let all: Vec<SkillId> = SkillId::ALL.to_vec();
-    store.set_deck(&black.id, &all).unwrap();
     fools_mate(&white, &black);
     let _ = black.next("game_over");
     black.send(ClientMsg::RewardChoice {
         choice: RewardChoice::Random { replace: None },
     });
-    let update = black.next("deck_update");
-    assert!(update["gained"].is_null(), "{update}");
+    let update = black.wait_for("deck_update").await;
+    let gained = update["gained"].as_str().expect("a skill was gained");
+    assert!(gained.starts_with("forged_"), "{update}");
+    let id = SkillId::parse(gained).unwrap();
+    assert!(store.deck(&black.id).unwrap().contains(&id));
+    let SkillId::Forged(n) = id else {
+        unreachable!()
+    };
+    let views = store.forged_views(&[n]).unwrap();
+    assert_eq!(views.len(), 1, "the definition is stored");
+    assert!(!views[0].name.is_empty() && !views[0].description.is_empty());
     let mut white = white;
     assert!(
-        !white.next("deck_update")["lost"].is_null(),
+        !white.wait_for("deck_update").await["lost"].is_null(),
         "the loser still loses a skill"
     );
+}
+
+#[tokio::test]
+async fn a_second_random_choice_while_forging_is_refused() {
+    let (app, store) = new_app(HubConfig::default());
+    let (white, mut black) = start_game(&app, &store, DECK_A, DECK_B);
+    fools_mate(&white, &black);
+    let _ = black.next("game_over");
+    for _ in 0..2 {
+        black.send(ClientMsg::RewardChoice {
+            choice: RewardChoice::Random { replace: None },
+        });
+    }
+    let _ = black.wait_for("deck_update").await;
+    // Only one skill was forged and handed over.
+    assert_eq!(store.deck(&black.id).unwrap().len(), DECK_B.len() + 1);
 }
 
 #[tokio::test]

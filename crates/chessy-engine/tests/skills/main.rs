@@ -9,6 +9,7 @@ mod celestial;
 mod control;
 mod evolve;
 mod forcefield;
+mod forged;
 mod geomancy;
 mod godhelp;
 mod invisibility;

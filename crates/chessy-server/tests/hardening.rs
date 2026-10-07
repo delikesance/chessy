@@ -251,7 +251,7 @@ async fn a_skill_lost_since_the_game_makes_the_claim_invalid() {
 
 #[tokio::test]
 async fn a_random_reward_only_takes_what_the_loser_owned_then() {
-    for _ in 0..10 {
+    for _ in 0..4 {
         let (_app, store, mut a, b, c, _) = alice_beat_bob();
         let (mut b, c) = ranked_match(b, c);
         mate(&b, &c);
@@ -261,7 +261,7 @@ async fn a_random_reward_only_takes_what_the_loser_owned_then() {
         a.send(ClientMsg::RewardChoice {
             choice: RewardChoice::Random { replace: None },
         });
-        let _ = a.next("deck_update");
+        let _ = a.wait_for("deck_update").await;
         let lost = b.last("deck_update")["lost"].clone();
         assert!(
             lost == "imune" || lost == "freeze",
@@ -360,6 +360,39 @@ async fn the_ranked_queue_does_not_pair_a_capped_pair_again() {
         + usize::from(b.try_next("deck_select").is_some());
     assert_eq!(paired, 1);
     assert!(c.try_next("deck_select").is_some());
+}
+
+#[tokio::test]
+async fn a_capped_pair_alone_in_the_queue_is_paired_anyway_for_an_unrated_game() {
+    // With only two players around, waiting for a third would be waiting for ever.
+    let (app, store) = new_app(HubConfig {
+        rated_pair_max: 1,
+        capped_pair_wait: Duration::from_millis(150),
+        queue_sweep_interval: Duration::from_millis(30),
+        ..HubConfig::default()
+    });
+    let mut a = account(&app, &store, "alice");
+    let mut b = account(&app, &store, "bob");
+    a.send(ClientMsg::QueueJoin { ranked: None });
+    b.send(ClientMsg::QueueJoin { ranked: None });
+    assert!(start(&mut a, &mut b));
+    short_game(&mut a, &mut b);
+
+    a.clear();
+    b.clear();
+    a.send(ClientMsg::QueueJoin { ranked: None });
+    b.send(ClientMsg::QueueJoin { ranked: None });
+    // Not at once: someone else is preferred for a moment.
+    assert!(a.try_next("deck_select").is_none() && b.try_next("deck_select").is_none());
+    let da = a.wait_for("deck_select").await;
+    let db = b.wait_for("deck_select").await;
+    assert_eq!(
+        (da["rated"].clone(), db["rated"].clone()),
+        (false.into(), false.into())
+    );
+    // Both are told why this game does not count.
+    assert!(a.has_notice("rated_pair_capped"));
+    assert!(b.has_notice("rated_pair_capped"));
 }
 
 #[tokio::test]

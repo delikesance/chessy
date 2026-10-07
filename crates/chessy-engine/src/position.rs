@@ -106,6 +106,10 @@ pub struct Position {
     pub benched: Vec<BenchedPiece>,
     /// Pawns each side has lost (indexed by `Color::index`); Wall brings them back.
     pub captured_pawns: [u8; 2],
+    /// Every real piece lost so far, with the type it really had (a morphed
+    /// piece is recorded under its original type). Forged skills that revive
+    /// pieces draw from it; mirages, wall pawns and temporary pieces never enter.
+    pub graveyard: Vec<Piece>,
     /// Set by a skill that passed the turn, cleared by any other action.
     pub last_skill_snapshot: Option<Box<Snapshot>>,
     pub(crate) next_id: PieceId,
@@ -125,6 +129,7 @@ impl Position {
             traps: Vec::new(),
             benched: Vec::new(),
             captured_pawns: [0; 2],
+            graveyard: Vec::new(),
             last_skill_snapshot: None,
             next_id: 0,
         }
@@ -278,6 +283,40 @@ impl Position {
         self.has_effect(id, EffectKind::Immune)
     }
 
+    /// Whether an Armistice is on: nothing attacks, so nothing is captured and
+    /// nobody is in check.
+    pub fn truce(&self) -> bool {
+        self.effects.iter().any(|e| e.kind == EffectKind::Truce)
+    }
+
+    pub fn fog(&self) -> bool {
+        self.effects.iter().any(|e| e.kind == EffectKind::Fog)
+    }
+
+    /// Whether `color` is forbidden to use skills (Silence).
+    pub fn is_silenced(&self, color: Color) -> bool {
+        self.effects
+            .iter()
+            .any(|e| e.kind == EffectKind::Silenced && e.owner == Some(color))
+    }
+
+    /// Starts a game-wide effect of `duration_plies`, aimed at `owner` if any.
+    pub fn add_global_effect(
+        &mut self,
+        kind: EffectKind,
+        owner: Option<Color>,
+        duration_plies: u32,
+    ) -> Event {
+        let mut effect = ActiveEffect::new(kind, NO_PIECE, self.ply + duration_plies);
+        effect.owner = owner;
+        self.effects.push(effect);
+        Event::GlobalEffect {
+            effect: kind,
+            expires_at: effect.expires_at,
+            owner,
+        }
+    }
+
     pub fn add_effect(&mut self, kind: EffectKind, piece: PieceId, duration_plies: u32) -> Event {
         self.push_effect(ActiveEffect::new(kind, piece, self.ply + duration_plies))
     }
@@ -327,6 +366,31 @@ impl Position {
             .min_by_key(|&s| (king_distance(origin, s), s))
     }
 
+    /// The safety net for forged skills: after one played, each side still has
+    /// as many kings as in `before`, no piece id is on the board twice and no
+    /// pawn stands on a back rank. A skill that breaks this is refused rather
+    /// than allowed to corrupt the game.
+    pub(crate) fn board_is_sane(&self, before: &Position) -> bool {
+        let kings = |p: &Position, c: Color| {
+            p.pieces(c)
+                .filter(|(_, x)| x.kind == PieceKind::King)
+                .count()
+        };
+        if Color::BOTH
+            .iter()
+            .any(|&c| kings(self, c) != kings(before, c))
+        {
+            return false;
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.board.iter().flatten().all(|p| seen.insert(p.id))
+            && self
+                .board
+                .iter()
+                .enumerate()
+                .all(|(i, p)| p.is_none_or(|p| Position::can_stand(p.kind, i as Square)))
+    }
+
     pub fn find_piece(&self, id: PieceId) -> Option<Square> {
         self.board
             .iter()
@@ -340,7 +404,7 @@ impl Position {
         let Some(piece) = self.board[from as usize] else {
             return Vec::new();
         };
-        if piece.mirage || self.is_frozen(piece.id) {
+        if piece.mirage || self.is_frozen(piece.id) || self.truce() {
             return Vec::new();
         }
         let mut out = Vec::new();
@@ -387,6 +451,9 @@ impl Position {
     /// cannot move, and mirages never capture, so they attack nothing; enemy
     /// terrain cannot be stopped on or crossed.
     pub fn is_attacked(&self, target: Square, by: Color) -> bool {
+        if !self.effects.is_empty() && self.truce() {
+            return false;
+        }
         let blocked = self.blocked_mask(by);
         if blocked & (1u64 << target) != 0 {
             return false;
@@ -456,15 +523,17 @@ impl Position {
     pub fn pseudo_moves(&self, out: &mut Vec<Move>) {
         let color = self.side;
         let blocked = self.blocked_mask(color);
+        let truce = !self.effects.is_empty() && self.truce();
         for (from, piece) in self.pieces(color) {
             if self.is_frozen(piece.id) {
                 continue;
             }
-            // A mirage can walk but never takes anything.
+            // A mirage can walk but never takes anything, and neither can
+            // anyone during an Armistice.
             let ctx = Gen {
                 color,
                 blocked,
-                captures: !piece.mirage,
+                captures: !piece.mirage && !truce,
             };
             match piece.kind {
                 PieceKind::Pawn => self.pawn_moves(from, ctx, out),
@@ -738,9 +807,18 @@ impl Position {
             square,
             piece: victim,
         });
-        if real_kind == PieceKind::Pawn && !victim.wall && !victim.mirage && !victim.temp {
-            let n = &mut self.captured_pawns[victim.color.index()];
-            *n = n.saturating_add(1);
+        if !victim.wall && !victim.mirage && !victim.temp {
+            if real_kind == PieceKind::Pawn {
+                let n = &mut self.captured_pawns[victim.color.index()];
+                *n = n.saturating_add(1);
+            }
+            if real_kind != PieceKind::King {
+                self.graveyard.push(Piece {
+                    kind: real_kind,
+                    prev: None,
+                    ..victim
+                });
+            }
         }
         reaction
     }
@@ -927,6 +1005,53 @@ impl Position {
             ev.push(frozen);
         }
         self.end_turn_events(ev);
+    }
+
+    /// Miroir: every piece goes to the square opposite it (same file, rank
+    /// `7 - r`) and changes color, so each player inherits the other's army and
+    /// its formation, on their own side of the board. Piece ids, effects and
+    /// the side to move are kept; everything that has a color or a square
+    /// follows. Returns the moves for the clients to animate.
+    pub fn mirror_armies(&mut self) -> Vec<Shift> {
+        let flip = |s: Square| sq(file_of(s), 7 - rank_of(s));
+        let mut board = [None; 64];
+        let mut shifts = Vec::new();
+        for (i, slot) in self.board.iter().enumerate() {
+            let Some(mut piece) = *slot else { continue };
+            let from = i as Square;
+            let to = flip(from);
+            piece.color = piece.color.opposite();
+            piece.home = flip(piece.home);
+            piece.prev = None;
+            board[to as usize] = Some(piece);
+            shifts.push(Shift { from, to });
+        }
+        self.board = board;
+        for e in &mut self.effects {
+            e.square = e.square.map(flip);
+            e.owner = e.owner.map(Color::opposite);
+            e.orig_color = e.orig_color.map(Color::opposite);
+        }
+        for t in &mut self.traps {
+            t.square = flip(t.square);
+            t.owner = t.owner.opposite();
+        }
+        for b in &mut self.benched {
+            b.square = flip(b.square);
+            b.piece.color = b.piece.color.opposite();
+            b.piece.home = flip(b.piece.home);
+        }
+        for g in &mut self.graveyard {
+            g.color = g.color.opposite();
+            g.home = flip(g.home);
+        }
+        self.captured_pawns.swap(0, 1);
+        // The kings changed places and color: so did the castling rights.
+        let white = self.castling & (WHITE_KING_SIDE | WHITE_QUEEN_SIDE);
+        let black = self.castling & (BLACK_KING_SIDE | BLACK_QUEEN_SIDE);
+        self.castling = (white << 2) | (black >> 2);
+        self.en_passant = None;
+        shifts
     }
 
     /// Drops castling rights whose king or rook is no longer on its home square

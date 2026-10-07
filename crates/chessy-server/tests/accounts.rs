@@ -467,3 +467,45 @@ async fn a_successful_login_clears_earlier_failures() {
         );
     }
 }
+
+#[tokio::test]
+async fn forged_skills_are_described_by_the_rest_api() {
+    let (api, _app, store) = api();
+    let mut rng = chessy_engine::ai::Rng::new(5);
+    let forged = chessy_engine::forge::generate::forge(
+        &mut rng,
+        chessy_engine::forge::Rarity::Common,
+        &std::collections::HashSet::new(),
+        chessy_engine::forge::generate::Budget {
+            attempts: 4,
+            positions: 4,
+        },
+    );
+    let n = store.insert_forged(&forged.def, &forged.graded).unwrap();
+
+    let (status, v) = api
+        .get(&format!("/api/skills/forged?ids={n},4000000000"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let skills = v["skills"].as_array().unwrap();
+    assert_eq!(skills.len(), 1, "an unknown id is left out: {v}");
+    let s = &skills[0];
+    assert_eq!(s["id"], format!("forged_{n}"));
+    for field in ["name", "description", "family", "rarity"] {
+        assert!(s[field].is_string(), "{field}: {s}");
+    }
+    assert!(s["icon"]["glyph"].is_string());
+    assert!(s["sound"]["effect"].is_number());
+    assert_eq!(s["unique"], forged.def.unique);
+
+    let (status, _) = api.get("/api/skills/forged?ids=1,x", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let many: Vec<String> = (0..65).map(|i| i.to_string()).collect();
+    let (status, _) = api
+        .get(&format!("/api/skills/forged?ids={}", many.join(",")), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "at most 64 ids");
+    let (status, v) = api.get("/api/skills/forged", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["skills"].as_array().unwrap().len(), 0);
+}

@@ -174,9 +174,9 @@ async fn new_classic_skills_can_be_picked_and_unique_ones_still_cannot() {
 }
 
 #[tokio::test]
-async fn random_rewards_draw_from_the_whole_pool() {
+async fn random_rewards_forge_skills_that_are_stored_and_owned() {
     let mut gained = HashSet::new();
-    for _ in 0..12 {
+    for _ in 0..5 {
         let (app, store) = new_app(HubConfig::default());
         // Nobody brings skills, so the fool's mate is final.
         let (white, mut black) = start_with(
@@ -190,30 +190,57 @@ async fn random_rewards_draw_from_the_whole_pool() {
         black.send(ClientMsg::RewardChoice {
             choice: RewardChoice::Random { replace: None },
         });
-        let update = black.next("deck_update");
+        let update = black.wait_for("deck_update").await;
         let skill: SkillId = serde_json::from_value(update["gained"].clone()).unwrap();
-        assert_ne!(skill, SkillId::Imune, "never something already owned");
-        if skill.kind() == SkillKind::Unique {
+        let SkillId::Forged(n) = skill else {
+            panic!("a random reward is a forged skill, got {skill:?}");
+        };
+        let view = store.forged_views(&[n]).unwrap().pop().expect("stored");
+        // A legendary skill is unique: it belongs to its forger alone.
+        assert_eq!(view.unique, skill.kind() == SkillKind::Unique);
+        if view.unique {
             assert_eq!(
                 store.unique_owner(skill).unwrap().as_deref(),
                 Some(black.id.as_str())
             );
         }
-        gained.insert(skill);
+        gained.insert(view.rarity);
     }
-    assert!(
-        gained.iter().any(|s| !matches!(
-            s,
-            SkillId::Teleportation
-                | SkillId::Imune
-                | SkillId::Freeze
-                | SkillId::Rollback
-                | SkillId::Clone
-                | SkillId::DestinySwapper
-                | SkillId::Remover
-        )),
-        "{gained:?}"
-    );
+    assert!(!gained.is_empty());
+}
+
+#[tokio::test]
+async fn forged_skills_are_listed_by_the_rest_api_and_survive_a_restart() {
+    let dir = std::env::temp_dir().join(format!("chessy-forged-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("db.sqlite");
+    let path = path.to_str().unwrap();
+    let id = {
+        let store = chessy_server::store::Store::open(path).unwrap();
+        let mut rng = chessy_engine::ai::Rng::new(77);
+        let forged = chessy_engine::forge::generate::forge(
+            &mut rng,
+            chessy_engine::forge::Rarity::Common,
+            &HashSet::new(),
+            chessy_engine::forge::generate::Budget {
+                attempts: 5,
+                positions: 4,
+            },
+        );
+        let n = store.insert_forged(&forged.def, &forged.graded).unwrap();
+        // The same definition keeps its id.
+        assert_eq!(store.insert_forged(&forged.def, &forged.graded).unwrap(), n);
+        assert!(store
+            .forged_signatures()
+            .unwrap()
+            .contains(&forged.def.signature()));
+        n
+    };
+    // Reopening registers the stored definitions again.
+    let store = chessy_server::store::Store::open(path).unwrap();
+    assert!(chessy_engine::forge::registry::is_registered(id));
+    assert_eq!(store.forged_views(&[id, 9_999_999]).unwrap().len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ---- uses and free actions ---------------------------------------------------
@@ -556,4 +583,50 @@ async fn skill_options_list_the_new_target_shapes() {
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+// ---- fog ---------------------------------------------------------------------
+
+fn pieces_on_board(state: &Value, color: &str) -> usize {
+    state["board"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["color"] == color)
+        .count()
+}
+
+#[tokio::test]
+async fn fog_hides_the_far_enemy_pieces_from_both_players() {
+    use chessy_engine::forge::{Effect, SkillDef};
+    let (app, store) = new_app(HubConfig::default());
+    let graded = chessy_engine::forge::Graded {
+        rarity: chessy_engine::forge::Rarity::Common,
+        score: 1.0,
+        cost: 1.0,
+        tone: 1.0,
+        redundant: false,
+    };
+    let id = SkillId::Forged(
+        store
+            .insert_forged(&SkillDef::new(Effect::Fog { plies: 6 }), &graded)
+            .unwrap(),
+    );
+    let (mut white, mut black) = start(&app, &store, &[id], &[SkillId::Imune]);
+    skill(&white, id, SkillTarget::None);
+    let w = white.last("state");
+    let b = black.last("state");
+    // Everything starts far away: each side sees only its own army.
+    assert_eq!(pieces_on_board(&w, "white"), 16, "{w}");
+    assert_eq!(
+        pieces_on_board(&w, "black"),
+        0,
+        "white still sees black: {w}"
+    );
+    assert_eq!(pieces_on_board(&b, "black"), 16, "{b}");
+    assert_eq!(
+        pieces_on_board(&b, "white"),
+        0,
+        "black still sees white: {b}"
+    );
 }

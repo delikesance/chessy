@@ -6,25 +6,25 @@ use std::collections::HashSet;
 use crate::common::*;
 
 /// xorshift64*: tiny, deterministic, no dependency.
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
     }
 
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
         self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
 
-    fn chance(&mut self, percent: u64) -> bool {
+    pub(crate) fn chance(&mut self, percent: u64) -> bool {
         self.next() % 100 < percent
     }
 
@@ -55,7 +55,7 @@ fn random_decks(rng: &mut Rng) -> ([Vec<SkillId>; 2], Vec<SkillId>) {
     (decks, all)
 }
 
-fn check_invariants(g: &Game, context: &str) {
+pub(crate) fn check_invariants(g: &Game, context: &str) {
     let pos = &g.pos;
     for color in Color::BOTH {
         let kings = pos
@@ -93,6 +93,15 @@ fn check_invariants(g: &Game, context: &str) {
     for e in &pos.effects {
         if e.kind == EffectKind::Terrain {
             assert!(e.square.is_some() && e.owner.is_some(), "{context}");
+            continue;
+        }
+        if e.kind.is_global() {
+            assert_eq!(e.piece, NO_PIECE, "{context}");
+            assert!(
+                e.expires_at > pos.ply,
+                "stale effect {:?}: {context}",
+                e.kind
+            );
             continue;
         }
         assert!(

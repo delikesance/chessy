@@ -1,0 +1,10 @@
+[package]
+name = "chessy-forge"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Calibrates the skill forge and reports on the skills it grades."
+
+[dependencies]
+chessy-engine = { path = "../chessy-engine" }
+serde_json.workspace = true

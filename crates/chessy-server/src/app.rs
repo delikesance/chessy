@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::bot;
-use crate::hub::{Hub, HubConfig, Timer};
-use crate::protocol::{ClientMsg, PlayerId, ServerMsg};
+use crate::hub::{ForgeJob, Hub, HubConfig, Timer};
+use crate::protocol::{ClientMsg, PlayerId, RewardChoice, ServerMsg};
 use crate::store::{Store, StoreError};
 
 /// Failed logins allowed per username within [`LOGIN_WINDOW`] before it is locked out.
@@ -207,9 +207,9 @@ impl App {
     /// connection that has since been replaced are ignored.
     pub fn handle(self: &Arc<Self>, player: &str, conn_id: u64, msg: ClientMsg) {
         let cost = msg.cost(self.config.expensive_cost);
-        self.run(|hub| {
+        let forge = self.run(|hub| {
             if !hub.admit(player, conn_id, cost) {
-                return;
+                return None;
             }
             match msg {
                 ClientMsg::Hello { .. } => {}
@@ -221,6 +221,9 @@ impl App {
                 ClientMsg::SelectDeck { skills } => hub.select_deck(player, skills),
                 ClientMsg::Action { action } => hub.action(player, action),
                 ClientMsg::Resign => hub.resign(player),
+                ClientMsg::RewardChoice {
+                    choice: RewardChoice::Random { replace },
+                } => return hub.begin_forge(player, replace),
                 ClientMsg::RewardChoice { choice } => hub.reward_choice(player, choice),
                 ClientMsg::OfferDraw => hub.offer_draw(player),
                 ClientMsg::RespondDraw { accept } => hub.respond_draw(player, accept),
@@ -243,6 +246,47 @@ impl App {
                 ClientMsg::Spectate { game_id } => hub.spectate(player, &game_id),
                 ClientMsg::Unspectate => hub.unspectate(player),
             }
+            None
+        });
+        if let Some(job) = forge {
+            self.fire_forge(job);
+        }
+    }
+
+    /// Forges the skill of a "random" reward off the hub lock, stores it, then
+    /// hands it to the winner. (Like `fire_bot`, it takes the lock directly:
+    /// going through the generic `run` from a spawned task would recurse at
+    /// the type level.)
+    fn fire_forge(self: &Arc<Self>, job: ForgeJob) {
+        let app = Arc::clone(self);
+        tokio::spawn(async move {
+            let ForgeJob {
+                player,
+                replace,
+                target,
+                seed,
+                known,
+                store,
+            } = job;
+            let made = tokio::task::spawn_blocking(move || {
+                let mut rng = chessy_engine::ai::Rng::new(seed);
+                let budget = chessy_engine::forge::generate::Budget::live();
+                let forged =
+                    chessy_engine::forge::generate::forge(&mut rng, target, &known, budget);
+                store
+                    .insert_forged(&forged.def, &forged.graded)
+                    .ok()
+                    .map(chessy_engine::SkillId::Forged)
+            })
+            .await
+            .ok()
+            .flatten();
+            let timers = {
+                let mut hub = app.hub.lock().unwrap_or_else(|e| e.into_inner());
+                hub.finish_forge(&player, replace, made);
+                hub.take_timers()
+            };
+            app.schedule(timers);
         });
     }
 }

@@ -18,6 +18,8 @@ Les règles des compétences sont décrites dans [docs/skills.md](docs/skills.md
 - **Jouer à la souris** : glisser-déposer des pièces et **premoves** multiples (jusqu'à 10 coups empilés à l'avance, annulables d'un clic droit, Échap ou Retour arrière) comme sur chess.com.
 - **Jouer sur téléphone** : plateau pleine largeur (cases de ~44 px) avec compétences et actions sous la main, mise en page dédiée au paysage (plateau fixe à gauche, panneaux à droite), journal et chat repliables, fenêtres de promotion / résultat plein écran, zone de toucher élargie sur le cadre et seuil de glisser adapté au doigt.
 - **Parties en direct** : onglet « En direct » pour regarder les parties en cours (contre l'IA ou entre joueurs, avec 30 s de décalage pour les duels) ; informations cachées (pièces invisibles, pièges) jamais révélées.
+- **Collection** : l'historique de vos compétences, obtenues, forgées ou perdues (d'où elles viennent, à qui vous les avez prises, qui vous les a prises).
+- **La forge** : en choisissant une compétence aléatoire après une victoire classée, on reçoit une compétence **inventée** (nom, description, icône, son et rareté déduits de sa définition). Toutes sont uniques à la naissance, mais une combinaison qui en répète une autre devient Commune ; seules celles qui bouleversent une partie sont Légendaires. Spécification dans [docs/spec-forge.md](docs/spec-forge.md).
 - **Replays et analyse** : toutes les parties sont enregistrées (« Mes parties ») ; replay pas à pas, analyse du moteur (précision, étiquettes meilleur/erreur/gaffe, meilleur coup en flèche) et exploration de variantes ; spécification dans [docs/spec-v4.md](docs/spec-v4.md).
 - **Design B « Graphite »** : thème plat et sobre, plateau Phaser, carte de lancement des compétences.
 

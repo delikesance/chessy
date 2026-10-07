@@ -132,8 +132,14 @@ impl Hub {
         }
         let strength = Strength::from_elo(solo.elo);
         let max_think = Duration::from_millis(strength.think_ms).min(self.config.bot_think_max);
+        // The bot plays the board its side sees: what Fog or Invisibility hides
+        // from it is not on the board it searches (so it cannot cheat). An
+        // action that is wrong on the real board is refused by `apply_bot_move`.
+        let mut snapshot = (**game).clone();
+        let hidden = super::view::hidden_ids(&game.pos, solo.bot);
+        snapshot.pos = super::view::view_position(&game.pos, solo.bot, &hidden);
         Some(BotJob {
-            game: (**game).clone(),
+            game: snapshot,
             strength,
             seed: bot::seed_for(game_id, ply),
             max_think,

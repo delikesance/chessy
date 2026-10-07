@@ -118,7 +118,7 @@ impl Client {
     }
 
     pub async fn wait_for(&mut self, ty: &str) -> Value {
-        for _ in 0..150 {
+        for _ in 0..400 {
             if let Some(v) = self.try_next(ty) {
                 return v;
             }

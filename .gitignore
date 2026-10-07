@@ -5,3 +5,7 @@
 *.sqlite-journal
 .env
 *.tsbuildinfo
+
+# Aperçus des rendus hextech
+web/src/assets/hextech/**/_*.png
+web/src/assets/hextech/_*.png

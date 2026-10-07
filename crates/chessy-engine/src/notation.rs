@@ -62,6 +62,7 @@ pub fn skill_name(skill: SkillId) -> &'static str {
         SkillId::Geomancy => "Geomancy",
         SkillId::Celestial => "Celestial Intervention",
         SkillId::Godhelp => "God Help",
+        SkillId::Forged(n) => crate::forge::registry::name(n),
     }
 }
 

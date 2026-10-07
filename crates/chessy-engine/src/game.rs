@@ -240,6 +240,9 @@ impl Game {
         self.pos.effects.len().hash(&mut h);
         self.pos.traps.len().hash(&mut h);
         self.pos.benched.len().hash(&mut h);
+        // Two identical boards with different graveyards are not the same
+        // position once a skill can revive the dead.
+        self.pos.graveyard.len().hash(&mut h);
         h.finish()
     }
 

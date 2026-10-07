@@ -83,6 +83,10 @@ pub struct HubConfig {
     /// `rated_pair_window`; further games between them are unrated.
     pub rated_pair_max: u32,
     pub rated_pair_window: Duration,
+    /// A pair that reached `rated_pair_max` is left waiting for someone else in
+    /// the ranked queue, but not for ever: with only two players around, after
+    /// this wait they are paired anyway, and the game does not count.
+    pub capped_pair_wait: Duration,
     /// Clock time charged for an action the player was offered but the real
     /// position refuses (a hidden piece was in the way): trying moves at random
     /// to find hidden pieces is not free. Games without a clock are not charged.
@@ -118,6 +122,7 @@ impl Default for HubConfig {
             reward_ttl: Duration::from_secs(6 * 3600),
             rated_pair_max: 3,
             rated_pair_window: Duration::from_secs(3600),
+            capped_pair_wait: Duration::from_secs(20),
             blocked_attempt_cost: Duration::from_secs(10),
         }
     }
@@ -264,7 +269,23 @@ impl Session {
     }
 }
 
+/// What the forge needs to make a skill off the hub lock (see
+/// [`Hub::begin_forge`]).
+pub struct ForgeJob {
+    pub player: PlayerId,
+    /// The skill to drop if the deck is full.
+    pub replace: Option<SkillId>,
+    /// The rarity the draw asked for.
+    pub target: chessy_engine::forge::Rarity,
+    pub seed: u64,
+    /// Signatures already in the world: a skill that repeats one is Common.
+    pub known: std::collections::HashSet<String>,
+    pub store: Store,
+}
+
 struct PendingReward {
+    /// A skill is being forged for the "random" choice: ignore further choices.
+    forging: bool,
     loser: PlayerId,
     /// What the loser owned when the game ended: the only skills the winner
     /// may take (and only those the loser still owns when they claim).
@@ -740,7 +761,8 @@ impl Hub {
 
     /// Repeatedly pairs the two waiting ranked players closest in Elo among
     /// those whose gap is within the range the older one's wait has earned
-    /// (ties go to whoever has waited longest).
+    /// (ties go to whoever has waited longest). A pair that already played its
+    /// share of rated games waits for someone else for `capped_pair_wait`.
     fn match_ranked(&mut self) {
         let now = Instant::now();
         // Pairs that already played their share of rated games against each
@@ -766,8 +788,13 @@ impl Hub {
             let Some((i, j, _)) = best else { return };
             let (pa, pb) = (&self.ranked_queue[i].player, &self.ranked_queue[j].player);
             if self.pair_capped(pa, pb) {
-                refused.push((pa.clone(), pb.clone()));
-                continue;
+                // Someone else is preferred, but two people alone in the queue
+                // are not left waiting for ever: they play an unrated game.
+                let since = self.ranked_queue[i].since.max(self.ranked_queue[j].since);
+                if now.saturating_duration_since(since) < self.config.capped_pair_wait {
+                    refused.push((pa.clone(), pb.clone()));
+                    continue;
+                }
             }
             let second = self.ranked_queue.remove(j);
             let first = self.ranked_queue.remove(i);
@@ -883,7 +910,13 @@ impl Hub {
         let humans: Vec<&PlayerId> = pair.iter().filter(|p| !crate::bot::is_bot_id(p)).collect();
         // Rematches and queue pairings between the same two accounts stop
         // counting for Elo (and rewards) once they pile up.
-        let rated = rated && !(humans.len() == 2 && self.pair_capped(&white, &black));
+        let capped = rated && humans.len() == 2 && self.pair_capped(&white, &black);
+        let rated = rated && !capped;
+        if capped {
+            for player in &humans {
+                self.send(player, ServerMsg::notice("rated_pair_capped", None));
+            }
+        }
         for player in &humans {
             self.rewards.remove(*player);
             self.leave_lobby_silently(player);
@@ -1521,6 +1554,7 @@ impl Hub {
                 self.rewards.insert(
                     player.clone(),
                     PendingReward {
+                        forging: false,
                         loser: loser.clone(),
                         loser_deck,
                         created: Instant::now(),
@@ -1617,13 +1651,25 @@ impl Hub {
     }
 
     pub fn reward_choice(&mut self, player: &str, choice: RewardChoice) {
+        if matches!(choice, RewardChoice::Random { .. }) {
+            // A random skill is forged: see `begin_forge`, which the app calls.
+            return self.fail(
+                player,
+                "invalid_reward",
+                "a random skill is forged, not drawn",
+            );
+        }
         let Some(pending) = self.rewards.remove(player) else {
             return self.fail(player, "no_reward", "you have no reward to claim");
         };
         if pending.created.elapsed() >= self.config.reward_ttl {
             return self.fail(player, "no_reward", "that reward has expired");
         }
-        match self.resolve_reward(player, &pending.loser, &pending.loser_deck, choice) {
+        if pending.forging {
+            self.rewards.insert(player.to_string(), pending);
+            return self.fail(player, "forging", "a skill is already being forged for you");
+        }
+        match self.resolve_reward(player, &pending.loser, &pending.loser_deck, choice, None) {
             Ok(()) => {}
             Err(msg) => {
                 // Let the player try again with a corrected choice.
@@ -1633,12 +1679,77 @@ impl Hub {
         }
     }
 
+    /// The winner chose a random skill: checks the reward and returns what
+    /// the forge needs. The forging itself takes a while (it measures the
+    /// candidates on real positions), so the app does it off the lock and then
+    /// calls [`Hub::finish_forge`].
+    pub fn begin_forge(&mut self, player: &str, replace: Option<SkillId>) -> Option<ForgeJob> {
+        let Some(pending) = self.rewards.get_mut(player) else {
+            self.fail(player, "no_reward", "you have no reward to claim");
+            return None;
+        };
+        if pending.created.elapsed() >= self.config.reward_ttl {
+            self.rewards.remove(player);
+            self.fail(player, "no_reward", "that reward has expired");
+            return None;
+        }
+        if pending.forging {
+            self.fail(player, "forging", "a skill is already being forged for you");
+            return None;
+        }
+        let known = match self.store.forged_signatures() {
+            Ok(known) => known,
+            Err(_) => {
+                self.fail(player, "internal", "internal error");
+                return None;
+            }
+        };
+        let seed: u64 = rand::random();
+        let target = chessy_engine::forge::generate::roll_rarity(&mut chessy_engine::ai::Rng::new(
+            seed ^ 0xA5A5,
+        ));
+        if let Some(pending) = self.rewards.get_mut(player) {
+            pending.forging = true;
+        }
+        Some(ForgeJob {
+            player: player.to_string(),
+            replace,
+            target,
+            seed,
+            known,
+            store: self.store.clone(),
+        })
+    }
+
+    /// The forge is done: `skill` is what it made, `None` if it failed.
+    pub fn finish_forge(&mut self, player: &str, replace: Option<SkillId>, skill: Option<SkillId>) {
+        let Some(mut pending) = self.rewards.remove(player) else {
+            return;
+        };
+        pending.forging = false;
+        let result = match skill {
+            None => Err("the forge could not make a skill, try again"),
+            Some(_) => self.resolve_reward(
+                player,
+                &pending.loser,
+                &pending.loser_deck,
+                RewardChoice::Random { replace },
+                skill,
+            ),
+        };
+        if let Err(msg) = result {
+            self.rewards.insert(player.to_string(), pending);
+            self.fail(player, "invalid_reward", msg);
+        }
+    }
+
     fn resolve_reward(
         &mut self,
         winner: &str,
         loser: &str,
         snapshot: &[SkillId],
         choice: RewardChoice,
+        forged: Option<SkillId>,
     ) -> Result<(), &'static str> {
         let db = |_: StoreError| "internal error";
         let winner_deck = self.deck_of(winner).map_err(db)?;
@@ -1673,18 +1784,13 @@ impl Hub {
                 (Some(skill), Some(skill), replace)
             }
             RewardChoice::Random { replace } => {
+                // The forge made the skill; the loser loses one of theirs at random.
+                let skill = forged.ok_or("no skill was forged")?;
+                if winner_deck.contains(&skill) {
+                    return Err("you already have that skill");
+                }
                 let mut rng = rand::rng();
-                let pool: Vec<SkillId> = SkillId::ALL
-                    .into_iter()
-                    .filter(|s| !winner_deck.contains(s))
-                    .filter(|s| {
-                        // A unique skill is only up for grabs when nobody owns it.
-                        s.kind() == SkillKind::Classic
-                            || self.store.unique_owner(*s).ok().flatten().is_none()
-                    })
-                    .collect();
-                let gain = pool.choose(&mut rng).copied();
-                (gain, loser_deck.choose(&mut rng).copied(), replace)
+                (Some(skill), loser_deck.choose(&mut rng).copied(), replace)
             }
         };
 

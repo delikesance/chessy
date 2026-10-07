@@ -208,6 +208,25 @@ pub enum EffectKind {
     Vanish,
     /// Geomancy terrain: not tied to a piece; see `square` and `owner`.
     Terrain,
+    /// Armistice (forged): nothing attacks anything, so there are no captures
+    /// and no check. Global: not tied to a piece.
+    Truce,
+    /// Fog (forged): each player only sees the enemy pieces within two squares
+    /// of one of their own. Global; the server does the hiding.
+    Fog,
+    /// Silence (forged): the player in `owner` cannot use skills. Global.
+    Silenced,
+}
+
+impl EffectKind {
+    /// Effects that belong to the whole game, not to a piece (their
+    /// `ActiveEffect::piece` is [`NO_PIECE`]).
+    pub fn is_global(self) -> bool {
+        matches!(
+            self,
+            EffectKind::Terrain | EffectKind::Truce | EffectKind::Fog | EffectKind::Silenced
+        )
+    }
 }
 
 /// `ActiveEffect::piece` for effects that are not about a piece (terrain).
@@ -412,6 +431,14 @@ pub enum Event {
     Vanished {
         square: Square,
         piece: Piece,
+    },
+    /// A game-wide effect began (Armistice, Fog, Silence). `owner` is the
+    /// player it is aimed at, when it is aimed at one.
+    GlobalEffect {
+        effect: EffectKind,
+        expires_at: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<Color>,
     },
     /// A piece lent by Mind Control went back to its side.
     LoanEnded {

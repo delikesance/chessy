@@ -178,6 +178,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "chessy-forge"
+version = "0.1.0"
+dependencies = [
+ "chessy-engine",
+ "serde_json",
+]
+
+[[package]]
 name = "chessy-server"
 version = "0.1.0"
 dependencies = [
