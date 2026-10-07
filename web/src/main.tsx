@@ -7,6 +7,7 @@ import "./styles/base.css";
 import "./ui/shell.css";
 import "./ui/skill.css";
 import "./styles/color.css";
+import "./styles/hextech.css";
 
 initTheme();
 
@@ -15,6 +16,8 @@ async function boot() {
   if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
     (await import("./dev/mock")).installMock();
   }
+  // Console de développement : `__store.set({ reveal: "mirror" })` montre la révélation de forge.
+  if (import.meta.env.DEV) (window as unknown as { __store: unknown }).__store = (await import("./store")).store;
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <App />

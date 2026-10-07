@@ -13,12 +13,19 @@ const TABS: { name: Route["name"]; label: string }[] = [
 export function Wordmark() {
   return (
     <a className="wordmark" href="#/" aria-label="Chessy, accueil">
-      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
-        <rect x="1.5" y="1.5" width="21" height="21" rx="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <rect x="12" y="1.5" width="10.5" height="10.5" fill="currentColor" opacity="0.9" />
-        <rect x="1.5" y="12" width="10.5" height="10.5" fill="currentColor" opacity="0.9" />
+      {/* Couronne « Crown5 » de Reicon (MIT), or poli. */}
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="wm-gold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#fff3c9" />
+            <stop offset=".5" stopColor="#e8b64f" />
+            <stop offset="1" stopColor="#9c6a14" />
+          </linearGradient>
+        </defs>
+        <path d="M17 22H7a.75.75 0 010-1.5h10a.75.75 0 010 1.5z" fill="url(#wm-gold)" />
+        <path d="M20.35 5.52l-4 2.86c-.53.38-1.29.15-1.52-.46l-1.89-5.04c-.32-.87-1.55-.87-1.87 0l-1.9 5.03c-.23.62-.98.85-1.51.46l-4-2.86c-.8-.56-1.86.23-1.53 1.16l4.16 11.65c.14.4.52.66.94.66h9.53c.42 0 .8-.27.94-.66l4.16-11.65c.34-.93-.72-1.72-1.51-1.16zM14.5 14.75h-5a.75.75 0 010-1.5h5a.75.75 0 010 1.5z" fill="url(#wm-gold)" />
       </svg>
-      <span>chessy</span>
+      <span>Chessy</span>
     </a>
   );
 }

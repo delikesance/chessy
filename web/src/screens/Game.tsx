@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PhaserBoard } from "../game/PhaserBoard";
-import { actionKey, appendLog, describeAction, launchOf, logFromHistory, type LogLine } from "../game/logic";
+import { actionKey, ambientEffects, appendLog, describeAction, launchOf, logFromHistory, type LogLine } from "../game/logic";
 import {
   activateSkill,
   cancelSpawn,
@@ -384,6 +384,11 @@ export function Game({ view }: { view: StateView }) {
         <div className="gm-top-mid">
           <span className="tag">{isBot ? "Entraînement" : view.rated ? "Classée" : "Amicale"}</span>
           <span className="mono muted">Demi-coup {view.ply}</span>
+          {ambientEffects(view).map((a) => (
+            <span key={a.kind} className={`tag amb amb-${a.kind}`} title={a.label} role="status">
+              {a.label.split(":")[0]} · {a.turns} tour{a.turns > 1 ? "s" : ""}
+            </span>
+          ))}
           {(view.spectators ?? 0) > 0 && (
             <span className="muted" aria-live="polite">
               {view.spectators} spectateur{view.spectators! > 1 ? "s" : ""}

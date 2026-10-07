@@ -3,10 +3,12 @@ import { FAMILY_LABEL } from "../catalog";
 import { hrefFor } from "../router";
 import { skillInfo } from "../skills";
 import { store, type AppState } from "../store";
+import { Mascot } from "../ui/Mascot";
 import { SkillArt } from "../ui/SkillArt";
 import { UniqueBadge } from "../ui/UniqueBadge";
 import { SoloCard } from "./SoloCard";
 import "./lobby.css";
+import { tileRarity } from "../ui/tileRarity";
 
 const DECK_SLOTS = 7;
 
@@ -49,11 +51,14 @@ export function Lobby({ state }: { state: AppState }) {
   return (
     <main className="lb-page">
       <header className="lb-head">
-        <p className="eyebrow">Lobby</p>
-        <h1 className="lb-title">Les échecs, avec des compétences.</h1>
-        <p className="muted lb-sub">
-          Choisissez trois compétences de votre deck avant chaque partie et retournez la partie en un coup.
-        </p>
+        <div className="lb-head-txt">
+          <p className="eyebrow">Lobby</p>
+          <h1 className="lb-title">Les échecs, avec des compétences.</h1>
+          <p className="muted lb-sub">
+            Choisissez trois compétences de votre deck avant chaque partie et retournez la partie en un coup.
+          </p>
+        </div>
+        <Mascot />
       </header>
 
       <div className="lb-grid">
@@ -193,7 +198,7 @@ export function Lobby({ state }: { state: AppState }) {
               const info = skillInfo(id);
               return (
                 <li key={id} className={`slot${info.unique ? " foil" : ""}`} style={{ "--fam": `var(--fam-${info.family})` } as CSSProperties} title={info.description}>
-                  <span className="slot-art">
+                  <span className="slot-art" data-rar={tileRarity(id)}>
                     <SkillArt id={id} size={54} />
                     {info.unique && <UniqueBadge />}
                   </span>

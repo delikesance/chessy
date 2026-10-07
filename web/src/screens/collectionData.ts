@@ -1,6 +1,7 @@
-// Règles complètes des compétences (source : docs/skills.md) et filtres de l'encyclopédie.
-import { CATALOG } from "../catalog";
-import type { CatalogEntry, CatalogId, Family } from "../catalog";
+// Règles complètes des compétences (source : docs/skills.md) et fonctions de l'historique de la collection.
+import type { CatalogId } from "../catalog";
+import type { SkillHistoryEntry } from "../protocol";
+import { parseServerDate } from "../ui/social";
 
 export const RULES: Record<CatalogId, string> = {
   teleportation: "Déplace une pièce vers n'importe quelle case de l'échiquier, sans tenir compte des obstacles.",
@@ -46,15 +47,93 @@ export const UNIQUE_NOTE =
 export const CLASSIC_NOTE =
   "Compétence classique : elle compte parmi les trois compétences sélectionnées avant la partie, choisies dans votre deck de 7 au maximum.";
 
-export type KindFilter = "all" | "unique" | "classic";
-export type FamilyFilter = Family | "all";
+export type HistoryFilter = "all" | "forged" | "obtained" | "lost";
 
-export function filterCatalog(
-  family: FamilyFilter,
-  kind: KindFilter,
-  catalog: readonly CatalogEntry[] = CATALOG,
-): CatalogEntry[] {
-  return catalog.filter(
-    (c) => (family === "all" || c.family === family) && (kind === "all" || (kind === "unique" ? c.unique : !c.unique)),
-  );
+export const HISTORY_FILTERS: { id: HistoryFilter; label: string }[] = [
+  { id: "all", label: "Tout" },
+  { id: "forged", label: "Forgées" },
+  { id: "obtained", label: "Obtenues" },
+  { id: "lost", label: "Perdues" },
+];
+
+/** Ce que raconte une ligne : « Forgée », « Volée à bob », « Prise par alice »… */
+export function describeEntry(e: SkillHistoryEntry): string {
+  const who = e.other ?? "un joueur sans compte";
+  switch (e.source) {
+    case "forged":
+      return "Forgée après une victoire";
+    case "stolen":
+      return `Volée à ${who}`;
+    case "won":
+      return "Gagnée après une victoire";
+    case "starter":
+      return "Deck de départ";
+    case "refill":
+      return "Offerte : votre deck était vide";
+    case "earlier":
+      return "Déjà dans votre deck";
+    case "taken":
+      return e.other ? `Prise par ${e.other} après une défaite` : "Prise par votre adversaire après une défaite";
+    case "replaced":
+      return "Remplacée pour faire de la place";
+  }
 }
+
+/** Les lignes qui correspondent au filtre (l'ordre est conservé). */
+export function filterHistory(entries: readonly SkillHistoryEntry[], filter: HistoryFilter): SkillHistoryEntry[] {
+  return entries.filter((e) => {
+    switch (filter) {
+      case "all":
+        return true;
+      case "forged":
+        return e.change === "gained" && e.source === "forged";
+      case "obtained":
+        return e.change === "gained" && e.source !== "forged";
+      case "lost":
+        return e.change === "lost";
+    }
+  });
+}
+
+export interface HistoryStats {
+  forged: number;
+  obtained: number;
+  lost: number;
+}
+
+export function historyStats(entries: readonly SkillHistoryEntry[]): HistoryStats {
+  return {
+    forged: filterHistory(entries, "forged").length,
+    obtained: filterHistory(entries, "obtained").length,
+    lost: filterHistory(entries, "lost").length,
+  };
+}
+
+/** Le jour d'une date serveur, en clair : « Aujourd'hui », « Hier » ou la date. */
+export function dayLabel(value: string, now: Date = new Date()): string {
+  const d = parseServerDate(value);
+  if (!d) return "Date inconnue";
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((start(now) - start(d)) / 86_400_000);
+  if (days <= 0) return "Aujourd'hui";
+  if (days === 1) return "Hier";
+  return new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" }).format(d);
+}
+
+export interface HistoryDay {
+  label: string;
+  entries: SkillHistoryEntry[];
+}
+
+/** Regroupe par jour, en gardant l'ordre (le plus récent d'abord). */
+export function groupByDay(entries: readonly SkillHistoryEntry[], now: Date = new Date()): HistoryDay[] {
+  const days: HistoryDay[] = [];
+  for (const e of entries) {
+    const label = dayLabel(e.at, now);
+    const last = days[days.length - 1];
+    if (last && last.label === label) last.entries.push(e);
+    else days.push({ label, entries: [e] });
+  }
+  return days;
+}
+

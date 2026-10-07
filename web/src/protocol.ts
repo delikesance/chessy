@@ -5,7 +5,8 @@ export type Square = number;
 export type Color = "white" | "black";
 export type PieceKind = "pawn" | "knight" | "bishop" | "rook" | "queen" | "king";
 
-export type SkillId =
+/** Les 27 compétences écrites à la main. */
+export type BuiltinSkillId =
   | "teleportation"
   | "imune"
   | "freeze"
@@ -32,7 +33,13 @@ export type SkillId =
   | "temporal"
   | "geomancy"
   | "celestial"
-  | "godhelp";
+  | "godhelp"
+;
+
+/** Une compétence forgée par le serveur : `forged_<n>` (voir `forged.ts`). */
+export type ForgedSkillId = `forged_${number}`;
+
+export type SkillId = BuiltinSkillId | ForgedSkillId;
 
 export interface Piece {
   id: number;
@@ -79,7 +86,14 @@ export type EffectKind =
   | "locked"
   | "morphed"
   | "color_loan"
-  | "vanish";
+  | "vanish"
+  /** Effets de partie entière (compétences forgées) : `piece` vaut alors `NO_PIECE`. */
+  | "truce"
+  | "fog"
+  | "silenced";
+
+/** `ActiveEffect.piece` d'un effet qui ne concerne aucune pièce. */
+export const NO_PIECE = 65_535;
 
 /** Les effets sans fin (Force Field, Celestial) ont `expires_at = 4294967295`. */
 export const NEVER_EXPIRES = 4_294_967_295;
@@ -90,6 +104,8 @@ export interface ActiveEffect {
   expires_at: number;
   orig_kind?: PieceKind;
   orig_color?: Color;
+  /** Silence : le joueur visé. */
+  owner?: Color;
 }
 
 export interface Terrain {
@@ -124,6 +140,7 @@ export type GameEvent =
   | { type: "best_move"; from: Square; to: Square; promo?: PieceKind }
   | { type: "cancelled"; skill: SkillId }
   | { type: "terrain"; squares: Square[] }
+  | { type: "global_effect"; effect: EffectKind; expires_at: number; owner?: Color }
   | { type: "vanished"; square: Square; piece: Piece }
   | { type: "loan_ended"; square: Square; piece: Piece };
 
@@ -327,7 +344,8 @@ export type NoticeCode =
   | "user_not_found"
   | "already_friends"
   | "friend_offline"
-  | "friend_busy";
+  | "friend_busy"
+  | "rated_pair_capped";
 
 export interface EloChange {
   you_before: number;
@@ -419,6 +437,27 @@ export interface GameSummary {
   plies: number;
   elo_delta: number | null;
   at: string;
+}
+
+/** Comment une compétence est arrivée ou partie (voir `history_store.rs`). */
+export type HistorySource = "starter" | "refill" | "forged" | "stolen" | "won" | "taken" | "replaced" | "earlier";
+
+/** Une ligne de l'historique des compétences d'un joueur. */
+export interface SkillHistoryEntry {
+  id: number;
+  skill: SkillId;
+  change: "gained" | "lost";
+  source: HistorySource;
+  /** L'autre joueur (volée à, prise par), s'il a un compte. */
+  other?: string;
+  /** Date ISO 8601 UTC. */
+  at: string;
+}
+
+/** `GET /api/me/skills` : l'historique (le plus récent d'abord) et le deck actuel. */
+export interface MySkills {
+  entries: SkillHistoryEntry[];
+  deck: SkillId[];
 }
 
 export interface MyGames {

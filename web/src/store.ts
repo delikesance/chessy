@@ -15,6 +15,8 @@ import type {
   StateView,
   UserResult,
 } from "./protocol";
+import { forgedVersion, isForgedId, loadForged, noticeForged, onForgedChange } from "./forged";
+import { skillName } from "./skills";
 import { sfx } from "./sound";
 import { isLive, reduceSpectator, SPECTATE_ERRORS, startSpectating, type SpectatingState } from "./replay/spectator";
 import { clampElo, readSolo, SOLO_DEFAULT, writeSolo, type SoloSetting } from "./solo";
@@ -38,6 +40,8 @@ export interface GameOver {
 }
 
 export interface AppState {
+  /** Change quand une définition de compétence forgée arrive : relance le rendu des fiches. */
+  forged: number;
   connection: "connecting" | "open" | "closed" | "replaced";
   playerId: string | null;
   /** Compte connecté (un invité a `guest: true`), `null` tant que le `welcome` n'est pas reçu. */
@@ -55,6 +59,8 @@ export interface AppState {
   incomingChallenge: { username: string; elo: number } | null;
   outgoingChallenge: string | null;
   toasts: Toast[];
+  /** Compétence qui vient d'être forgée : affichée en plein écran jusqu'à ce que le joueur la range. */
+  reveal: SkillId | null;
   /** Messages de la partie en cours (remis à zéro à chaque nouvelle partie). */
   chat: ChatLine[];
   rematch: "none" | "offered" | "received";
@@ -105,6 +111,7 @@ function writeToken(token: string | null) {
 export const EMPTY_FRIENDS: FriendsSnapshot = { friends: [], incoming: [], outgoing: [] };
 
 const initial: AppState = {
+  forged: 0,
   connection: "connecting",
   playerId: null,
   account: null,
@@ -119,6 +126,7 @@ const initial: AppState = {
   incomingChallenge: null,
   outgoingChallenge: null,
   toasts: [],
+  reveal: null,
   chat: [],
   rematch: "none",
   solo: SOLO_DEFAULT,
@@ -165,6 +173,8 @@ export function noticeText(code: NoticeCode, username?: string): string {
       return `${who} est déjà votre ami.`;
     case "friend_offline":
       return `${who} n'est pas en ligne.`;
+    case "rated_pair_capped":
+      return "Vous avez déjà joué 3 parties classées l'un contre l'autre cette heure : celle-ci ne compte pas pour l'Elo.";
     case "friend_busy":
       return `${who} est en pleine partie.`;
     default:
@@ -190,6 +200,10 @@ export class Store {
   private challengeTimer: ReturnType<typeof setTimeout> | null = null;
   private soloTimer: ReturnType<typeof setTimeout> | null = null;
 
+  constructor() {
+    onForgedChange(() => this.set({ forged: forgedVersion() }));
+  }
+
   getState = () => this.state;
 
   subscribe = (fn: () => void) => {
@@ -206,6 +220,10 @@ export class Store {
     const id = ++this.toastId;
     this.set({ toasts: [...this.state.toasts.slice(-3), { id, text }] });
     setTimeout(() => this.dismissToast(id), TOAST_MS);
+  }
+
+  dismissReveal() {
+    this.set({ reveal: null });
   }
 
   dismissToast(id?: number) {
@@ -225,7 +243,10 @@ export class Store {
       socket.send(JSON.stringify({ type: "hello", token: readToken() } satisfies ClientMsg));
     };
     socket.onmessage = (e) => {
-      if (this.socket === socket) this.receive(JSON.parse(e.data as string) as ServerMsg);
+      if (this.socket !== socket) return;
+      // Les compétences forgées citées dans le message sont décrites à part.
+      noticeForged(e.data as string);
+      this.receive(JSON.parse(e.data as string) as ServerMsg);
     };
     socket.onclose = () => {
       if (this.socket !== socket || this.stopped || this.state.connection === "replaced") return;
@@ -475,6 +496,14 @@ export class Store {
         });
         break;
       case "deck_update":
+        if (msg.gained) {
+          // Le nom d'une compétence forgée n'est connu qu'une fois sa définition reçue.
+          const gained = msg.gained;
+          void loadForged([gained]).then(() => {
+            if (isForgedId(gained)) this.set({ reveal: gained });
+            else this.notify(`Nouvelle compétence : ${skillName(gained)}`);
+          });
+        }
         this.set({
           deck: msg.deck,
           pendingReward: null,

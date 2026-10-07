@@ -1,8 +1,10 @@
 import type { CSSProperties } from "react";
-import { FAMILY_LABEL } from "../catalog";
+import { FAMILY_LABEL, skillEntry } from "../catalog";
 import { skillInfo } from "../skills";
 import { SkillArt } from "../ui/SkillArt";
+import { RarityTag } from "../ui/RarityTag";
 import { UniqueBadge } from "../ui/UniqueBadge";
+import { tileRarity } from "../ui/tileRarity";
 
 interface Props {
   skill: string;
@@ -21,11 +23,12 @@ interface Props {
 /** Carte de compétence : illustration, nom, famille, description, liseré de famille. */
 export function SkillCard({ skill, selected, order, disabled, locked, badge, radio, onClick }: Props) {
   const info = skillInfo(skill);
+  const rarity = skillEntry(skill).rarity;
   const style = { "--fam": `var(--fam-${info.family})` } as CSSProperties;
   const classes = ["skc", selected ? "on" : "", locked ? "locked" : "", radio ? "radio" : "", info.unique ? "foil" : ""].filter(Boolean).join(" ");
   const content = (
     <>
-      <span className="skc-art">
+      <span className="skc-art" data-rar={tileRarity(skill)}>
         <SkillArt id={skill} size={46} />
         {info.unique && <UniqueBadge />}
       </span>
@@ -33,7 +36,7 @@ export function SkillCard({ skill, selected, order, disabled, locked, badge, rad
         <span className="skc-name">{info.name}</span>
         <span className="skc-meta">
           <span className="eyebrow">{FAMILY_LABEL[info.family]}</span>
-          {info.unique && <span className="tag foil-tag">unique</span>}
+          {rarity ? <RarityTag rarity={rarity} /> : info.unique && <span className="tag foil-tag">unique</span>}
           {locked && (
             <span className="tag skc-lock">
               <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" focusable="false">

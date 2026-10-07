@@ -16,6 +16,7 @@ import { store, useAppState } from "./store";
 import { ChallengeModal, OutgoingChallenge } from "./ui/ChallengeModal";
 import { NavBar } from "./ui/NavBar";
 import { SkillSprite } from "./ui/SkillArt";
+import { ForgeReveal } from "./ui/ForgeReveal";
 import { Toasts } from "./ui/Toasts";
 
 // Phaser is large; only load it once a game starts.
@@ -112,6 +113,7 @@ export function App() {
       {reward && <RewardModal offer={reward} />}
       {state.incomingChallenge && <ChallengeModal challenge={state.incomingChallenge} />}
       {state.outgoingChallenge && !inGame && <OutgoingChallenge username={state.outgoingChallenge} />}
+      {state.reveal && <ForgeReveal skill={state.reveal} />}
       <Toasts toasts={state.toasts} />
     </>
   );

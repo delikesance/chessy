@@ -92,6 +92,9 @@ button.foil:hover:not(:disabled) { box-shadow: 0 0 0 1px rgba(243, 213, 139, .28
 .foil .skill-art { animation: foil-glow 3.8s ease-in-out infinite; }
 .foil-tag { color: #f3d58b; border-color: rgba(243, 213, 139, .45); background: rgba(243, 213, 139, .08); }
 
+/* Étiquette de rareté (compétences forgées). */
+.rar-tag { --rar: var(--rar-common); color: var(--rar); border-color: color-mix(in srgb, var(--rar) 45%, transparent); background: color-mix(in srgb, var(--rar) 9%, transparent); }
+
 /* Badge couronne. */
 .foil-badge {
   position: absolute; top: -7px; left: -7px; z-index: 3; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;

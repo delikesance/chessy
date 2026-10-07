@@ -1,5 +1,5 @@
 // Noms de sons et classification (aucune dépendance Web Audio : utilisable dans les tests et côté UI).
-import type { SkillId } from "../protocol";
+import type { BuiltinSkillId, SkillId } from "../protocol";
 
 export type SfxName =
   | "move"
@@ -27,7 +27,7 @@ export type SfxName =
   | "vanish"
   | `skill_${SkillId}`;
 
-export const SKILL_IDS: SkillId[] = [
+export const SKILL_IDS: BuiltinSkillId[] = [
   "teleportation", "imune", "freeze", "rollback", "clone", "destiny_swapper", "remover", "wall", "mirage",
   "evolve", "switch", "mind", "control", "morph", "canceller", "tornado", "invisibility", "terminator",
   "trap", "bench", "forcefield", "transposition", "queensac", "temporal", "geomancy", "celestial", "godhelp",

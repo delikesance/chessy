@@ -1,5 +1,7 @@
-import { memo } from "react";
+import { memo, useSyncExternalStore } from "react";
 import { skillEntry, type Family } from "../catalog";
+import { forgedDef, forgedVersion, isForgedId, onForgedChange } from "../forged";
+import { ForgedLayers } from "./forgedGlyphs";
 
 /**
  * Sprite SVG des 27 compétences (`sk-<id>`), dessinées au trait dans un viewBox 120x120.
@@ -269,6 +271,8 @@ interface Props {
 
 /** Illustration d'une compétence ; la couleur suit la famille. */
 export const SkillArt = memo(function SkillArt({ id, size, className, family }: Props) {
+  // Une compétence forgée est décrite par le serveur : l'icône se redessine quand sa définition arrive.
+  useSyncExternalStore(onForgedChange, forgedVersion, forgedVersion);
   const fam = family ?? skillEntry(id).family;
   return (
     <svg
@@ -285,7 +289,7 @@ export const SkillArt = memo(function SkillArt({ id, size, className, family }: 
       strokeLinejoin="round"
       style={{ color: `var(--fam-${fam})` }}
     >
-      <use href={`#sk-${id}`} />
+      {isForgedId(id) ? <ForgedLayers def={forgedDef(id)} /> : <use href={`#sk-${id}`} />}
     </svg>
   );
 });

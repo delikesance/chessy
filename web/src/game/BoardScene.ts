@@ -2,6 +2,9 @@ import Phaser from "phaser";
 import { exceedsDragThreshold, type Highlights } from "../interaction";
 import type { ActiveEffect, Color, EffectKind, GameEvent, Piece, PieceKind, SkillId, SkillTarget, Square, StateView, Terrain } from "../protocol";
 import { FX, drawArrow, drawDashedArrow, drawEffectMark, drawDashedRing, drawHalo, drawHexRing, drawRune, drawShield, drawStrings, effectColor } from "./fx";
+import { skillEntry } from "../catalog";
+import { HEX_FRAME_KEY, HEX_SQUARES_KEY, hexSourceKey, hextechAssets } from "./hextech";
+import { isForgedId } from "../forged";
 import { actionKey, turnsLeft } from "./logic";
 import { accentColor, boardTheme, getTheme, hexToNum, pieceSet, premoveColor, type ThemeSettings } from "../theme";
 import { dragLift, dragScale, dragThreshold, markBoost, squareAtPoint, touchSlop } from "./touch";
@@ -15,6 +18,7 @@ import {
   TILE,
   drawBoard,
   drawPiece,
+  drawSpritePiece,
   drawRock,
   drawStonePiece,
   pieceKey,
@@ -31,7 +35,7 @@ export interface PremoveMark {
 }
 
 const MOVE_MS = 260;
-const PIECE_SCALE = 76 / PIECE_TEX;
+const PIECE_SCALE = 80 / PIECE_TEX;
 const KINDS: PieceKind[] = ["pawn", "knight", "bishop", "rook", "queen", "king"];
 const MONO = '"Geist Mono Variable", "Geist Mono", ui-monospace, monospace';
 
@@ -202,6 +206,10 @@ export class BoardScene extends Phaser.Scene {
     super("board");
   }
 
+  preload() {
+    for (const [key, url] of hextechAssets()) this.load.image(key, url);
+  }
+
   create() {
     this.ensurePieceTextures(this.theme.pieces);
     for (const color of ["white", "black"] as Color[]) {
@@ -284,7 +292,9 @@ export class BoardScene extends Phaser.Scene {
         if (this.textures.exists(key)) continue;
         const tex = this.textures.createCanvas(key, PIECE_TEX, PIECE_TEX);
         if (!tex) continue;
-        drawPiece(tex.getSourceImage() as HTMLCanvasElement, kind, color, color === "white" ? set.white : set.black);
+        const sprite = setId === "hextech" ? this.textures.get(hexSourceKey(color, kind)) : null;
+        if (sprite && sprite.key !== "__MISSING") drawSpritePiece(tex.getSourceImage() as HTMLCanvasElement, sprite.getSourceImage() as HTMLImageElement);
+        else drawPiece(tex.getSourceImage() as HTMLCanvasElement, kind, color, color === "white" ? set.white : set.black);
         tex.refresh();
       }
     }
@@ -615,7 +625,13 @@ export class BoardScene extends Phaser.Scene {
     if (!this.textures.exists(key)) {
       const tex = this.textures.createCanvas(key, SIZE, SIZE);
       if (tex) {
-        drawBoard(tex.getSourceImage() as HTMLCanvasElement, this.orientation, colors);
+        const squares = this.textures.get(HEX_SQUARES_KEY);
+        const frame = this.textures.get(HEX_FRAME_KEY);
+        const skin =
+          this.theme.board === "obsidian" && squares.key !== "__MISSING" && frame.key !== "__MISSING"
+            ? { squares: squares.getSourceImage() as HTMLImageElement, frame: frame.getSourceImage() as HTMLImageElement }
+            : null;
+        drawBoard(tex.getSourceImage() as HTMLCanvasElement, this.orientation, colors, skin);
         tex.refresh();
         this.boardKeys.add(key);
       }
@@ -1262,6 +1278,14 @@ export class BoardScene extends Phaser.Scene {
         case "terrain":
           this.cameraShake(240, 0.004, 100);
           break;
+        case "global_effect": {
+          // Armistice, brouillard, silence : un voile de couleur sur tout l'échiquier.
+          const color = e.effect === "truce" ? FX.shield : e.effect === "fog" ? FX.dust : FX.glitch;
+          this.flash(color, e.effect === "fog" ? 0.3 : 0.18, 640);
+          const mid = SIZE / 2;
+          this.rings(mid, mid, color, 20, SIZE * 0.55, 720);
+          break;
+        }
         case "vanished": {
           const c = this.center(e.square);
           this.rings(c.x, c.y, FX.glitch, 8, 42, 360);
@@ -1352,7 +1376,25 @@ export class BoardScene extends Phaser.Scene {
       case "godhelp":
         break;
       default:
+        if (isForgedId(skill)) this.forgedFlourish(skill, at);
         break;
+    }
+  }
+
+  /** Éclat d'une compétence forgée : ses anneaux prennent la couleur de sa famille, l'or pour une légendaire. */
+  private forgedFlourish(skill: SkillId, at: { x: number; y: number } | null) {
+    const entry = skillEntry(skill);
+    const family: Record<string, number> = { attack: FX.attack, defense: FX.shield, mobility: FX.trail, control: FX.thread, create: FX.clone };
+    const color = entry.rarity === "legendary" ? FX.gold : (family[entry.family] ?? FX.thread);
+    const mid = SIZE / 2;
+    const { x, y } = at ?? { x: mid, y: mid };
+    this.rings(x, y, color, 10, at ? 54 : SIZE * 0.45, 480);
+    this.rings(x, y, color, 6, at ? 36 : SIZE * 0.3, 480, 90);
+    if (entry.rarity === "legendary") {
+      this.flash(FX.gold, 0.16, 560);
+      this.cameraShake(240, 0.003, 100);
+    } else if (!at) {
+      this.flash(color, 0.1, 420);
     }
   }
 

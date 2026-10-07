@@ -7,6 +7,7 @@ import { store, type ChatLine } from "../../store";
 import { SkillArt } from "../../ui/SkillArt";
 import { UniqueBadge } from "../../ui/UniqueBadge";
 import { useCompact } from "../../ui/useCompact";
+import { tileRarity } from "../../ui/tileRarity";
 
 interface SkillListProps {
   slots: SkillSlot[];
@@ -91,7 +92,7 @@ export function SkillList({ slots, view, myTurn, active, onToggle }: SkillListPr
                 title={info.description}
                 onClick={() => onToggle(slot.skill)}
               >
-                <span className="gm-skill-art">
+                <span className="gm-skill-art" data-rar={tileRarity(slot.skill)}>
                   <SkillArt id={slot.skill} size={36} />
                   {info.unique && <UniqueBadge />}
                 </span>

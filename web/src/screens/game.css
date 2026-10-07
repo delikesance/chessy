@@ -251,3 +251,9 @@ body:has(.gm) { overscroll-behavior-y: contain; }
 @media (prefers-reduced-motion: reduce) {
   .gm-launch-card { animation: none; }
 }
+
+/* Effets de partie entière (armistice, brouillard, silence). */
+.amb { border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.amb-truce { --accent: var(--fam-defense); }
+.amb-fog { --accent: var(--muted); }
+.amb-silenced { --accent: var(--fam-attack); }

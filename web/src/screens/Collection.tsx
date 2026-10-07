@@ -1,163 +1,179 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { FAMILIES, FAMILY_LABEL, familyVar } from "../catalog";
-import type { CatalogEntry } from "../catalog";
-import { useAppState } from "../store";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../api";
+import { FAMILY_LABEL, skillEntry } from "../catalog";
+import type { MySkills, SkillHistoryEntry } from "../protocol";
+import { readToken, useAppState } from "../store";
+import { RarityTag } from "../ui/RarityTag";
 import { SkillArt } from "../ui/SkillArt";
 import { SkillPreview } from "../ui/skillPreview";
+import { relativeTime } from "../ui/social";
 import { UniqueBadge } from "../ui/UniqueBadge";
-import { CLASSIC_NOTE, filterCatalog, RULES, UNIQUE_NOTE } from "./collectionData";
-import type { FamilyFilter, KindFilter } from "./collectionData";
+import {
+  CLASSIC_NOTE,
+  describeEntry,
+  filterHistory,
+  groupByDay,
+  HISTORY_FILTERS,
+  historyStats,
+  RULES,
+  UNIQUE_NOTE,
+  type HistoryFilter,
+} from "./collectionData";
 import "./collection.css";
+import { tileRarity } from "../ui/tileRarity";
 
-const KINDS: { id: KindFilter; label: string }[] = [
-  { id: "all", label: "Toutes" },
-  { id: "unique", label: "Uniques" },
-  { id: "classic", label: "Classiques" },
-];
+type Status = "loading" | "ready" | "error";
 
+/** Page `#/collection` : l'historique des compétences obtenues, forgées ou perdues. */
 export function Collection() {
+  // `forged` change quand la définition d'une compétence forgée arrive : relance le rendu des fiches.
   const { deck } = useAppState();
-  const [family, setFamily] = useState<FamilyFilter>("all");
-  const [kind, setKind] = useState<KindFilter>("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [hoverId, setHoverId] = useState<string | null>(null);
-  const panelRef = useRef<HTMLElement | null>(null);
+  const [data, setData] = useState<MySkills | null>(null);
+  const [status, setStatus] = useState<Status>("loading");
+  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const [open, setOpen] = useState<number | null>(null);
+  const ctl = useRef<AbortController | null>(null);
 
-  const list = useMemo(() => filterCatalog(family, kind), [family, kind]);
-  const selected = list.find((c) => c.id === selectedId) ?? null;
-  const inDeck = useMemo(() => new Set<string>(deck), [deck]);
-  const total = filterCatalog("all", "all").length;
+  const load = useCallback(async () => {
+    ctl.current?.abort();
+    const c = new AbortController();
+    ctl.current = c;
+    try {
+      const res = await api.mySkills(readToken() ?? "", c.signal);
+      if (c.signal.aborted) return;
+      setData(res);
+      setStatus("ready");
+    } catch {
+      if (!c.signal.aborted) setStatus((s) => (s === "ready" ? s : "error"));
+    }
+  }, []);
 
+  // Recharge quand le deck change (une récompense vient d'être réclamée).
+  const deckKey = deck.join(",");
   useEffect(() => {
-    if (!selected) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSelectedId(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
+    void load();
+    return () => ctl.current?.abort();
+  }, [load, deckKey]);
+
+  const entries = useMemo(() => data?.entries ?? [], [data]);
+  const stats = useMemo(() => historyStats(entries), [entries]);
+  const days = useMemo(() => groupByDay(filterHistory(entries, filter)), [entries, filter]);
+  const owned = useMemo(() => new Set<string>(data?.deck ?? deck), [data, deck]);
+  const legendary = useMemo(
+    () => filterHistory(entries, "forged").filter((e) => skillEntry(e.skill).rarity === "legendary").length,
+    [entries],
+  );
+  // Seule la ligne la plus récente d'une compétence dit qu'elle est « dans votre deck ».
+  const current = useMemo(() => {
+    const seen = new Set<string>();
+    const ids = new Set<number>();
+    for (const e of entries) {
+      if (seen.has(e.skill)) continue;
+      seen.add(e.skill);
+      if (e.change === "gained" && owned.has(e.skill)) ids.add(e.id);
+    }
+    return ids;
+  }, [entries, owned]);
 
   return (
     <main className="co-page">
       <header className="co-head">
-        <div>
-          <p className="eyebrow">Encyclopédie</p>
-          <h1 className="co-title">Compétences</h1>
-          <p className="co-lead muted">
-            {total} compétences à découvrir. Vous en gagnez en remportant des parties ; votre deck en contient 7 au maximum.
-          </p>
-        </div>
+        <p className="eyebrow">Historique</p>
+        <h1 className="co-title">Collection</h1>
+        <p className="co-lead muted">
+          Les compétences que vous avez obtenues ou forgées, et ce qu'il est advenu d'elles. Votre deck en contient 7 au maximum.
+        </p>
       </header>
 
-      <div className="co-filters">
-        <div className="co-chips" role="group" aria-label="Filtrer par famille">
-          <button type="button" className="co-chip" aria-pressed={family === "all"} onClick={() => setFamily("all")}>
-            Toutes les familles
+      <section className="co-stats" aria-label="Résumé">
+        <Stat label="Forgées" value={stats.forged} hint={legendary > 0 ? `dont ${legendary} légendaire${legendary > 1 ? "s" : ""}` : undefined} />
+        <Stat label="Obtenues" value={stats.obtained} />
+        <Stat label="Perdues" value={stats.lost} />
+        <Stat label="Dans votre deck" value={owned.size} hint="sur 7" />
+      </section>
+
+      <div className="seg co-filter" role="group" aria-label="Filtrer l'historique">
+        {HISTORY_FILTERS.map((f) => (
+          <button key={f.id} type="button" aria-pressed={filter === f.id} className={filter === f.id ? "on" : ""} onClick={() => setFilter(f.id)}>
+            {f.label}
           </button>
-          {FAMILIES.map((f) => (
-            <button key={f} type="button" className="co-chip" aria-pressed={family === f} onClick={() => setFamily(f)}>
-              <span className="co-dot" style={{ background: familyVar(f) }} aria-hidden="true" />
-              {FAMILY_LABEL[f]}
-            </button>
-          ))}
-        </div>
-        <div className="seg co-kind" role="group" aria-label="Filtrer par type">
-          {KINDS.map((k) => (
-            <button key={k.id} type="button" aria-pressed={kind === k.id} className={kind === k.id ? "on" : ""} onClick={() => setKind(k.id)}>
-              {k.label}
-            </button>
-          ))}
-        </div>
+        ))}
       </div>
 
-      <p className="co-count mono" aria-live="polite">
-        {list.length} / {total}
-      </p>
+      {status === "loading" && <p className="co-empty muted">Chargement de l'historique…</p>}
+      {status === "error" && (
+        <p className="co-empty card" role="alert">
+          Impossible de charger l'historique.{" "}
+          <button type="button" className="btn sm ghost" onClick={() => void load()}>
+            Réessayer
+          </button>
+        </p>
+      )}
+      {status === "ready" && days.length === 0 && (
+        <p className="co-empty card">
+          {entries.length === 0
+            ? "Aucune compétence pour l'instant."
+            : "Rien dans cette catégorie. Gagnez une partie classée pour forger ou prendre une compétence."}
+        </p>
+      )}
 
-      <div className={`co-layout${selected ? " has-detail" : ""}`}>
-        {list.length === 0 ? (
-          <p className="co-empty card">Aucune compétence ne correspond à ces filtres.</p>
-        ) : (
-          <ul className="co-grid">
-            {list.map((c) => (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  className={`co-card${selected?.id === c.id ? " on" : ""}${c.unique ? " foil" : ""}`}
-                  style={{ ["--fam" as string]: familyVar(c.family) }}
-                  aria-pressed={selected?.id === c.id}
-                  onMouseEnter={() => setHoverId(c.id)}
-                  onMouseLeave={() => setHoverId((h) => (h === c.id ? null : h))}
-                  onFocus={() => setHoverId(c.id)}
-                  onBlur={() => setHoverId((h) => (h === c.id ? null : h))}
-                  onClick={() => {
-                    setSelectedId(c.id);
-                    panelRef.current?.focus({ preventScroll: true });
-                  }}
-                >
-                  <span className="co-art">
-                    {hoverId === c.id ? <SkillPreview id={c.id} compact /> : <SkillArt id={c.id} size={76} />}
-                    {c.unique && <UniqueBadge />}
-                  </span>
-                  <span className="co-card-body">
-                    <span className="co-name">{c.name}</span>
-                    <span className="co-fam">{FAMILY_LABEL[c.family]}</span>
-                    <span className="co-desc">{c.description}</span>
-                  </span>
-                  <span className="co-marks">
-                    {c.unique && <span className="tag foil-tag">Unique</span>}
-                    {!c.implemented && <span className="tag co-soon">Bientôt jouable</span>}
-                    {inDeck.has(c.id) && <span className="tag co-deck">Dans votre deck</span>}
-                  </span>
-                </button>
-              </li>
+      {days.map((day) => (
+        <section key={day.label} className="hi-day" aria-label={day.label}>
+          <h2 className="hi-day-title">{day.label}</h2>
+          <ul className="hi-list">
+            {day.entries.map((e) => (
+              <Row key={e.id} entry={e} current={current.has(e.id)} open={open === e.id} onToggle={() => setOpen(open === e.id ? null : e.id)} />
             ))}
           </ul>
-        )}
-
-        <aside
-          ref={panelRef}
-          tabIndex={-1}
-          className="co-detail card"
-          aria-label="Détail de la compétence"
-          aria-live="polite"
-        >
-          {selected ? <Detail entry={selected} owned={inDeck.has(selected.id)} onClose={() => setSelectedId(null)} /> : <Placeholder />}
-        </aside>
-      </div>
+        </section>
+      ))}
     </main>
   );
 }
 
-function Placeholder() {
-  return <p className="muted co-placeholder">Sélectionnez une compétence pour lire ses règles complètes.</p>;
+function Stat({ label, value, hint }: { label: string; value: number; hint?: string }) {
+  return (
+    <div className="co-stat">
+      <span className="co-stat-n mono">{value}</span>
+      <span className="co-stat-l">{label}</span>
+      {hint && <span className="co-stat-h muted">{hint}</span>}
+    </div>
+  );
 }
 
-function Detail({ entry: c, owned, onClose }: { entry: CatalogEntry; owned: boolean; onClose: () => void }) {
+function Row({ entry, current, open, onToggle }: { entry: SkillHistoryEntry; current: boolean; open: boolean; onToggle: () => void }) {
+  const info = skillEntry(entry.skill);
+  const lost = entry.change === "lost";
+  const classes = ["hi-row", lost ? "lost" : "", info.unique ? "foil" : ""].filter(Boolean).join(" ");
   return (
-    <div className="co-detail-in" style={{ ["--fam" as string]: familyVar(c.family) }}>
-      <button type="button" className="co-close btn sm ghost" onClick={onClose}>
-        Fermer
+    <li className={classes} style={{ ["--fam" as string]: `var(--fam-${info.family})` }}>
+      <button type="button" className="hi-head" aria-expanded={open} onClick={onToggle}>
+        <span className="hi-art" data-rar={tileRarity(entry.skill)}>
+          <SkillArt id={entry.skill} size={46} />
+          {info.unique && <UniqueBadge />}
+        </span>
+        <span className="hi-body">
+          <span className="hi-name">{info.name}</span>
+          <span className="hi-what">
+            <span className={`hi-change ${lost ? "out" : "in"}`}>{lost ? "Perdue" : "Obtenue"}</span> · {describeEntry(entry)}
+          </span>
+          <span className="hi-meta">
+            <span className="eyebrow">{FAMILY_LABEL[info.family]}</span>
+            {info.rarity ? <RarityTag rarity={info.rarity} /> : info.unique && <span className="tag foil-tag">unique</span>}
+            {current && <span className="tag co-deck">Dans votre deck</span>}
+          </span>
+        </span>
+        <time className="hi-when mono muted" dateTime={entry.at}>
+          {relativeTime(entry.at)}
+        </time>
       </button>
-      <div className={`co-detail-art${c.unique ? " foil" : ""}`}>
-        <SkillArt id={c.id} size={88} />
-        {c.unique && <UniqueBadge />}
-      </div>
-      <p className="eyebrow co-detail-fam">{FAMILY_LABEL[c.family]}</p>
-      <h2 className="co-detail-name">{c.name}</h2>
-      <p className="co-marks">
-        {c.unique ? <span className="tag foil-tag">Unique</span> : <span className="tag">Classique</span>}
-        {!c.implemented && <span className="tag co-soon">Bientôt jouable</span>}
-        {owned && <span className="tag co-deck">Dans votre deck</span>}
-      </p>
-      <h3 className="co-sub">Aperçu</h3>
-      <SkillPreview id={c.id} caption />
-      <h3 className="co-sub">Règles</h3>
-      <p className="co-rules">{RULES[c.id] ?? c.description}</p>
-      <p className="co-note muted">{c.unique ? UNIQUE_NOTE : CLASSIC_NOTE}</p>
-      {!c.implemented && (
-        <p className="co-note muted">Cette compétence n'est pas encore disponible en partie : elle arrive dans une prochaine version.</p>
+      {open && (
+        <div className="hi-detail">
+          <p className="hi-rules">{(RULES as Record<string, string>)[entry.skill] ?? info.description}</p>
+          <SkillPreview id={entry.skill} caption />
+          <p className="muted hi-note">{info.unique ? UNIQUE_NOTE : CLASSIC_NOTE}</p>
+        </div>
       )}
-    </div>
+    </li>
   );
 }

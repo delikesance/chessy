@@ -6,6 +6,7 @@ import { SkillArt } from "../ui/SkillArt";
 import { UniqueBadge } from "../ui/UniqueBadge";
 import { SkillCard } from "./SkillCard";
 import "./reward.css";
+import { tileRarity } from "../ui/tileRarity";
 
 type Pick = { kind: "steal"; skill: SkillId } | { kind: "random" } | null;
 
@@ -21,10 +22,18 @@ export function buildChoice(offer: RewardOffer, pick: Pick, replace: SkillId | u
 export function RewardModal({ offer }: { offer: RewardOffer }) {
   const [pick, setPick] = useState<Pick>(null);
   const [replace, setReplace] = useState<SkillId | undefined>();
+  // Une compétence aléatoire est forgée par le serveur, ce qui prend un instant.
+  const [forging, setForging] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dialog.current?.focus();
   }, []);
+  useEffect(() => {
+    if (!forging) return;
+    // Si le serveur refuse (la récompense reste affichée), on rend la main.
+    const t = setTimeout(() => setForging(false), 15_000);
+    return () => clearTimeout(t);
+  }, [forging]);
 
   const choice = buildChoice(offer, pick, replace);
   const needsReplace = offer.deck_full && pick !== null && replace === undefined;
@@ -36,7 +45,7 @@ export function RewardModal({ offer }: { offer: RewardOffer }) {
         <h2 id="rw-title" className="rw-title">
           Choisissez votre récompense
         </h2>
-        <p className="muted rw-sub">Prenez une compétence à votre adversaire, tirez-en une au hasard, ou passez.</p>
+        <p className="muted rw-sub">Prenez une compétence à votre adversaire, faites-en forger une inédite, ou passez.</p>
 
         <div className="rw-sec">
           <p className="rw-label" id="rw-take">
@@ -57,15 +66,17 @@ export function RewardModal({ offer }: { offer: RewardOffer }) {
               role="radio"
               aria-checked={pick?.kind === "random"}
               className={`skc radio rw-random${pick?.kind === "random" ? " on" : ""}`}
+              disabled={forging}
               onClick={() => setPick({ kind: "random" })}
             >
-              <span className="skc-art">
+              <span className="skc-art" data-rar="legendary">
                 <SkillArt id="godhelp" size={46} family="create" />
               </span>
               <span className="skc-body">
-                <span className="skc-name">Compétence aléatoire</span>
+                <span className="skc-name">Forger une compétence</span>
                 <span className="skc-desc">
-                  Vous recevez une compétence tirée au hasard ; l'adversaire en perd une au hasard.
+                  Le forgeron crée une compétence inédite, de rareté aléatoire (commune à légendaire) ; l'adversaire en perd
+                  une au hasard.
                 </span>
               </span>
               <span className="skc-ring" aria-hidden="true" />
@@ -95,7 +106,7 @@ export function RewardModal({ offer }: { offer: RewardOffer }) {
                     style={{ "--fam": `var(--fam-${info.family})` } as CSSProperties}
                     onClick={() => setReplace(skill)}
                   >
-                    <span className="slot-art">
+                    <span className="slot-art" data-rar={tileRarity(skill)}>
                       <SkillArt id={skill} size={46} />
                       {info.unique && <UniqueBadge />}
                     </span>
@@ -110,18 +121,22 @@ export function RewardModal({ offer }: { offer: RewardOffer }) {
 
         <div className="rw-foot">
           <p className="muted rw-hint" role="status">
-            {needsReplace ? "Sélectionnez la compétence à remplacer pour continuer." : ""}
+            {forging ? "Le forgeron travaille…" : needsReplace ? "Sélectionnez la compétence à remplacer pour continuer." : ""}
           </p>
-          <button type="button" className="btn ghost" onClick={() => store.send({ type: "reward_choice", choice: { kind: "skip" } })}>
+          <button type="button" className="btn ghost" disabled={forging} onClick={() => store.send({ type: "reward_choice", choice: { kind: "skip" } })}>
             Passer
           </button>
           <button
             type="button"
             className="btn pri"
-            disabled={!choice}
-            onClick={() => choice && store.send({ type: "reward_choice", choice })}
+            disabled={!choice || forging}
+            onClick={() => {
+              if (!choice) return;
+              if (choice.kind === "random") setForging(true);
+              store.send({ type: "reward_choice", choice });
+            }}
           >
-            Confirmer
+            {forging ? "Forge en cours…" : "Confirmer"}
           </button>
         </div>
       </div>

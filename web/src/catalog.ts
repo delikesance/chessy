@@ -1,39 +1,15 @@
+import { forgedDef, isForgedId, type Rarity } from "./forged";
+import type { BuiltinSkillId, SkillId } from "./protocol";
+
 // Catalogue des 27 compétences (source : docs/skills.md). Les identifiants sont ceux du serveur
 // (`SkillId`) ; `implemented` vaut vrai pour les 27 depuis la v3.
 
 export type Family = "attack" | "defense" | "mobility" | "control" | "create";
 
-export type CatalogId =
-  | "teleportation"
-  | "imune"
-  | "freeze"
-  | "rollback"
-  | "clone"
-  | "destiny_swapper"
-  | "remover"
-  | "wall"
-  | "mirage"
-  | "evolve"
-  | "switch"
-  | "mind"
-  | "control"
-  | "morph"
-  | "canceller"
-  | "tornado"
-  | "invisibility"
-  | "terminator"
-  | "trap"
-  | "bench"
-  | "forcefield"
-  | "transposition"
-  | "queensac"
-  | "temporal"
-  | "geomancy"
-  | "celestial"
-  | "godhelp";
+export type CatalogId = BuiltinSkillId;
 
 export interface CatalogEntry {
-  id: CatalogId;
+  id: SkillId;
   name: string;
   family: Family;
   unique: boolean;
@@ -41,6 +17,8 @@ export interface CatalogEntry {
   description: string;
   /** Jouable côté serveur (les 27 le sont depuis la v3). */
   implemented: boolean;
+  /** Rareté d'une compétence forgée ; les 27 écrites à la main n'en ont pas. */
+  rarity?: Rarity;
 }
 
 export const FAMILY_LABEL: Record<Family, string> = {
@@ -53,13 +31,16 @@ export const FAMILY_LABEL: Record<Family, string> = {
 
 export const FAMILIES: Family[] = ["attack", "defense", "mobility", "control", "create"];
 
+/** Une fiche des 27 compétences écrites à la main. */
+export type BuiltinEntry = CatalogEntry & { id: CatalogId };
+
 const e = (
   id: CatalogId,
   name: string,
   family: Family,
   description: string,
   opts: { unique?: boolean; implemented?: boolean } = {},
-): CatalogEntry => ({
+): BuiltinEntry => ({
   id,
   name,
   family,
@@ -68,7 +49,7 @@ const e = (
   implemented: opts.implemented ?? true,
 });
 
-export const CATALOG: readonly CatalogEntry[] = [
+export const CATALOG: readonly BuiltinEntry[] = [
   // Compétences classiques
   e("teleportation", "Teleportation", "mobility", "Déplace une de vos pièces vers n'importe quelle case vide, sans tenir compte des obstacles.", {}),
   e("imune", "Imune", "defense", "Rend une de vos pièces (pas le roi) invulnérable pendant le prochain tour adverse.", {}),
@@ -104,9 +85,25 @@ export const CATALOG_BY_ID: Record<string, CatalogEntry> = Object.fromEntries(CA
 
 /** Fiche d'une compétence ; une compétence inconnue du client reçoit une fiche neutre. */
 export function skillEntry(id: string): CatalogEntry {
+  if (isForgedId(id)) {
+    const def = forgedDef(id);
+    if (def) {
+      return {
+        id,
+        name: def.name,
+        family: def.family,
+        unique: def.unique,
+        description: def.description,
+        implemented: true,
+        rarity: def.rarity,
+      };
+    }
+    // Pas encore reçue (la requête est partie) : une fiche d'attente.
+    return { id, name: "Pouvoir forgé", family: "control", unique: false, description: "", implemented: true };
+  }
   return (
     CATALOG_BY_ID[id] ?? {
-      id: id as CatalogId,
+      id: id as SkillId,
       name: id.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()),
       family: "control",
       unique: false,

@@ -9,6 +9,7 @@ import type {
   LiveGames,
   Me,
   MyGames,
+  MySkills,
   PublicProfile,
 } from "./protocol";
 
@@ -58,6 +59,8 @@ export function apiErrorText(err: unknown): string {
   return "Une erreur est survenue. Réessayez.";
 }
 
+import { noticeForged } from "./forged";
+
 interface RequestOptions {
   method?: "GET" | "POST";
   body?: unknown;
@@ -95,7 +98,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   try {
-    return (await res.json()) as T;
+    const text = await res.text();
+    // Rejeux, profils, parties : ils citent des compétences forgées qu'il faudra décrire.
+    noticeForged(text);
+    return JSON.parse(text) as T;
   } catch {
     throw new ApiError("bad_response", res.status);
   }
@@ -119,6 +125,10 @@ export const api = {
   },
   profile(username: string, signal?: AbortSignal) {
     return request<PublicProfile>(`/players/${encodeURIComponent(username)}`, { signal });
+  },
+  /** Historique de mes compétences, obtenues, forgées ou perdues (Bearer requis). */
+  mySkills(token: string, signal?: AbortSignal) {
+    return request<MySkills>("/me/skills", { token, signal });
   },
   // ---- v4 : parties enregistrées, replays, analyse, direct (docs/spec-v4.md §2-§3) ----
   /** Mes parties, de la plus récente à la plus ancienne (Bearer requis). */

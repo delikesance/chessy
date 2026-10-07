@@ -1,7 +1,7 @@
 // Logique pure de l'écran de jeu (horloges, matériel, journal), sans React ni Phaser.
 
 import { skillName } from "../skills";
-import type { Clock, Color, EffectKind, GameEvent, HistoryEntry, Piece, PieceKind, Square, StateView } from "../protocol";
+import { NO_PIECE, type Clock, type Color, type EffectKind, type GameEvent, type HistoryEntry, type Piece, type PieceKind, type Square, type StateView } from "../protocol";
 
 // ---- horloges -----------------------------------------------------------------
 
@@ -177,6 +177,8 @@ function describeEvent(e: GameEvent, board: (Piece | null)[], inSkill: boolean):
       return [`${skillName(e.skill)} annulée`];
     case "terrain":
       return [`${e.squares.length} cases de roc`];
+    case "global_effect":
+      return [`${EFFECT_FR[e.effect]}`];
     case "vanished":
       return [`${PIECE_FR[e.piece.kind].toLowerCase()} ${sqName(e.square)} disparaît`];
     case "loan_ended":
@@ -196,6 +198,9 @@ const EFFECT_FR: Record<EffectKind, string> = {
   morphed: "pièce métamorphosée",
   color_loan: "pièce sous contrôle",
   vanish: "pièce éphémère",
+  truce: "armistice",
+  fog: "brouillard",
+  silenced: "pouvoirs réduits au silence",
 };
 
 function pieceLabel(p: Piece): string {
@@ -216,6 +221,30 @@ export function actionKey(view: Pick<StateView, "ply" | "events" | "my_skills">)
 /** Durée restante d'un effet ou d'un terrain, en tours complets (un tour = 2 demi-coups). */
 export function turnsLeft(expiresAt: number, ply: number): number {
   return Math.max(0, Math.ceil((expiresAt - ply) / 2));
+}
+
+/** Un effet de partie entière (armistice, brouillard, silence), pour le bandeau de la partie. */
+export interface Ambient {
+  kind: EffectKind;
+  label: string;
+  /** Tours complets restants. */
+  turns: number;
+}
+
+/** Les effets qui ne concernent aucune pièce, tels que `me` les vit. */
+export function ambientEffects(view: Pick<StateView, "effects" | "ply" | "you">): Ambient[] {
+  const out: Ambient[] = [];
+  for (const e of view.effects ?? []) {
+    if (e.piece !== NO_PIECE) continue;
+    const turns = turnsLeft(e.expires_at, view.ply);
+    if (turns === 0) continue;
+    if (e.kind === "truce") out.push({ kind: e.kind, label: "Armistice : plus de captures ni d'échecs", turns });
+    else if (e.kind === "fog") out.push({ kind: e.kind, label: "Brouillard : vue limitée à deux cases", turns });
+    else if (e.kind === "silenced") {
+      out.push({ kind: e.kind, label: e.owner === view.you ? "Silence : vous ne pouvez plus utiliser de compétence" : "Silence : l'adversaire ne peut plus utiliser de compétence", turns });
+    }
+  }
+  return out;
 }
 
 /** Compétence lancée lors de la dernière action, s'il y en a une. */

@@ -5,6 +5,7 @@ import { isLowPriority, isUiSfx, type SfxName } from "./names";
 import { mapEventsToSfx, planSfx } from "./mapping";
 import { levelOf } from "./levels";
 import { RECIPES } from "./recipes";
+import { forgedLevelFor, forgedRecipeFor } from "./forgedLookup";
 import { createEngine, Voice, type Engine } from "./synth";
 
 export type { SfxName } from "./names";
@@ -178,7 +179,7 @@ export function createSfx(deps: SfxDeps = {}): Sfx {
 
   function play(name: SfxName, opts: PlayOpts = {}) {
     if (!engine || broken || !allowed(name, settings, opts.force)) return;
-    const recipe = RECIPES[name];
+    const recipe = RECIPES[name as keyof typeof RECIPES] ?? forgedRecipeFor(name);
     if (!recipe) return;
     const ctx = engine.ctx;
     try {
@@ -196,7 +197,7 @@ export function createSfx(deps: SfxDeps = {}): Sfx {
         live[0].fadeOut(0.02);
       }
       const pitch = 1 + (d.random() * 2 - 1) * PITCH_SPREAD;
-      const volume = settings.effects * (opts.volume ?? 1) * levelOf(name);
+      const volume = settings.effects * (opts.volume ?? 1) * (forgedLevelFor(name) ?? levelOf(name));
       const voice = new Voice(engine, t0, pitch, Math.max(0, volume), release);
       voices.push(voice);
       recipe(voice);
