@@ -2,7 +2,8 @@
 //! Squares are indices `0..64` with `a1 = 0` and `h8 = 63`.
 
 use chessy_engine::{
-    Action, ActiveEffect, Color, Event, Move, Outcome, Piece, SkillId, SkillTarget, Square,
+    Action, ActiveEffect, Color, Event, Move, Outcome, Piece, PieceKind, SkillId, SkillTarget,
+    Square,
 };
 use serde::{Deserialize, Serialize};
 
@@ -255,6 +256,28 @@ pub struct TerrainView {
     pub expires_at: u32,
 }
 
+/// A piece that ended an action on `square`: lets a client name what moved
+/// without the board of that time.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct Landed {
+    pub square: Square,
+    pub kind: PieceKind,
+}
+
+/// One past action as its receiver saw it (events filtered like the live
+/// ones). Sent with the state a player gets on (re)connection, so the journal
+/// of a game survives a page reload.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct HistoryEntry {
+    /// The ply of the position the action led to.
+    pub ply: u32,
+    /// Who was to move after the action.
+    pub to_move: Color,
+    pub events: Vec<Event>,
+    /// Where the pieces of the `Moved` events stand now.
+    pub landed: Vec<Landed>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct StateView {
     pub game_id: String,
@@ -289,6 +312,10 @@ pub struct StateView {
     pub ply_count: u32,
     /// People watching the game right now.
     pub spectators: usize,
+    /// Every action played so far, oldest first. Only sent when a player
+    /// (re)joins their game: live states carry just `events`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<HistoryEntry>,
 }
 
 #[derive(Clone, Debug, Serialize)]

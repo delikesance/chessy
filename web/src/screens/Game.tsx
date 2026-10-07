@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PhaserBoard } from "../game/PhaserBoard";
-import { actionKey, appendLog, describeAction, launchOf, type LogLine } from "../game/logic";
+import { actionKey, appendLog, describeAction, launchOf, logFromHistory, type LogLine } from "../game/logic";
 import {
   activateSkill,
   cancelSpawn,
@@ -137,6 +137,11 @@ export function Game({ view }: { view: StateView }) {
     const fresh = logGame.current !== view.game_id;
     logGame.current = view.game_id;
     if (fresh) setResultHidden(false);
+    // À la reprise de la partie (F5, reconnexion), le serveur renvoie tout l'historique : il remplace le journal.
+    if (view.history && view.history.length > 0) {
+      setLog(logFromHistory(view.history));
+      return;
+    }
     const line = describeAction(view);
     setLog((cur) => appendLog(fresh ? [] : cur, line && { ...line, key: action }));
     // eslint-disable-next-line react-hooks/exhaustive-deps

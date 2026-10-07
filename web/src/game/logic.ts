@@ -1,7 +1,7 @@
 // Logique pure de l'écran de jeu (horloges, matériel, journal), sans React ni Phaser.
 
 import { skillName } from "../skills";
-import type { Clock, Color, EffectKind, GameEvent, Piece, PieceKind, Square, StateView } from "../protocol";
+import type { Clock, Color, EffectKind, GameEvent, HistoryEntry, Piece, PieceKind, Square, StateView } from "../protocol";
 
 // ---- horloges -----------------------------------------------------------------
 
@@ -99,7 +99,7 @@ export function actorOf(view: Pick<StateView, "events" | "to_move">): Color {
 }
 
 /** Une ligne de journal pour la dernière action de `view`, ou `null` si elle n'a rien produit. */
-export function describeAction(view: StateView): LogLine | null {
+export function describeAction(view: Pick<StateView, "events" | "board" | "ply" | "to_move">): LogLine | null {
   const { events, board } = view;
   if (events.length === 0) return null;
   const actor = actorOf(view);
@@ -222,6 +222,24 @@ export function turnsLeft(expiresAt: number, ply: number): number {
 export function launchOf(view: Pick<StateView, "events">): { color: Color; skill: string } | null {
   for (const e of view.events) if (e.type === "skill_used") return { color: e.color, skill: e.skill };
   return null;
+}
+
+/**
+ * Journal reconstruit à partir de l'historique envoyé à la reprise de la partie (rechargement de la page).
+ * Chaque ligne reçoit une clé propre à sa place dans l'historique : Mind Reading/Control laissent le `ply`
+ * inchangé, deux lignes peuvent donc partager le même demi-coup.
+ */
+export function logFromHistory(history: HistoryEntry[], max = 200): LogLine[] {
+  const lines: LogLine[] = [];
+  history.forEach((entry, i) => {
+    // `describeAction` ne lit que les cases d'arrivée des coups : un plateau creux suffit.
+    const board: (Piece | null)[] = Array.from({ length: 64 }, () => null);
+    const mover = entry.to_move === "white" ? "black" : "white";
+    for (const { square, kind } of entry.landed) board[square] = { id: -1, kind, color: mover };
+    const line = describeAction({ events: entry.events, board, ply: entry.ply, to_move: entry.to_move });
+    if (line) lines.push({ ...line, key: `h${i}` });
+  });
+  return lines.slice(-max);
 }
 
 /** Ajoute `line` au journal sans doublon (par `key` si présente, sinon par demi-coup). */

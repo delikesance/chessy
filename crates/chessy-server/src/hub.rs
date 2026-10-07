@@ -251,6 +251,9 @@ struct Session {
     /// synthetic id that is never connected and has no account).
     solo: Option<solo::Solo>,
     recording: Recording,
+    /// Every action as each colour saw it (indexed by `Color::index()`), so a
+    /// player who reloads the page gets their journal back.
+    history: [Vec<HistoryEntry>; 2],
 }
 
 impl Session {
@@ -543,7 +546,8 @@ impl Hub {
             }
             Phase::Playing { game } => {
                 let spectators = self.watcher_count(game_id);
-                let view = state_view(game_id, session, game, color, Vec::new(), spectators);
+                let mut view = state_view(game_id, session, game, color, Vec::new(), spectators);
+                view.history = session.history[color.index()].clone();
                 self.send(player, ServerMsg::State(Box::new(view)));
             }
         }
@@ -921,6 +925,7 @@ impl Hub {
                 actions: Vec::new(),
             },
             solo: seat_solo,
+            history: [Vec::new(), Vec::new()],
         };
         for player in &humans {
             self.player_game.insert((*player).clone(), game_id.clone());
@@ -1359,8 +1364,46 @@ impl Hub {
     }
 
     fn broadcast_state(&mut self, game_id: &str, events: Vec<chessy_engine::Event>) {
+        self.remember_action(game_id, &events);
         self.send_player_states(game_id, &events);
         self.spectate_publish(game_id, events);
+    }
+
+    /// Files what `events` did under each colour's history, filtered as the
+    /// live state is. Nothing to file when nothing happened (a clock penalty,
+    /// a draw offer, the start of the game).
+    fn remember_action(&mut self, game_id: &str, events: &[chessy_engine::Event]) {
+        if events.is_empty() {
+            return;
+        }
+        let Some(session) = self.games.get_mut(game_id) else {
+            return;
+        };
+        let Phase::Playing { game } = &session.phase else {
+            return;
+        };
+        for color in Color::BOTH {
+            let hidden = view::hidden_ids(&game.pos, color);
+            let seen = view::events(events.to_vec(), color, game, &hidden);
+            let landed = seen
+                .iter()
+                .filter_map(|e| match e {
+                    chessy_engine::Event::Moved { to, .. } => {
+                        game.pos.board[*to as usize].map(|p| Landed {
+                            square: *to,
+                            kind: p.kind,
+                        })
+                    }
+                    _ => None,
+                })
+                .collect();
+            session.history[color.index()].push(HistoryEntry {
+                ply: game.pos.ply,
+                to_move: game.side_to_move(),
+                events: seen,
+                landed,
+            });
+        }
     }
 
     fn send_player_states(&self, game_id: &str, events: &[chessy_engine::Event]) {
@@ -1752,6 +1795,7 @@ fn state_view(
         },
         ply_count: game.pos.ply,
         spectators,
+        history: Vec::new(),
     }
 }
 

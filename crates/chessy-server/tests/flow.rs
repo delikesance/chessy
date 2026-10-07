@@ -553,6 +553,56 @@ async fn reconnecting_in_time_resumes_the_game() {
 }
 
 #[tokio::test]
+async fn resuming_a_game_replays_the_moves_already_played() {
+    let (app, store) = new_app(HubConfig::default());
+    let (mut white, mut black) = start_game(&app, &store, DECK_A, DECK_B);
+    white.mv("e2", "e4");
+    black.mv("e7", "e5");
+    white.mv("g1", "f3");
+    let _ = white.last("state");
+    let _ = black.last("state");
+
+    // A page reload: the old socket goes away, the same token comes back.
+    app.disconnect(&white.id, white.conn);
+    let mut back = Client::connect(&app, Some(white.token.clone()));
+    let state = back.next("state");
+    assert_eq!(state["ply"], 3);
+    assert!(state["events"].as_array().unwrap().is_empty());
+    let history = state["history"]
+        .as_array()
+        .expect("history is sent on resume");
+    assert_eq!(history.len(), 3, "one entry per action: {history:?}");
+    for (i, entry) in history.iter().enumerate() {
+        assert_eq!(entry["ply"], i as u64 + 1);
+        assert_eq!(entry["events"][0]["type"], "moved");
+    }
+    assert_eq!(history[0]["events"][0]["from"], 12);
+    assert_eq!(history[0]["events"][0]["to"], 28);
+    assert_eq!(history[0]["to_move"], "black");
+    // The kind of the piece that moved travels with the entry (the board is gone by then).
+    assert_eq!(
+        history[2]["landed"],
+        json!([{"square": 21, "kind": "knight"}])
+    );
+
+    // The opponent gets the same history; live states do not carry it.
+    app.disconnect(&black.id, black.conn);
+    let mut black_back = Client::connect(&app, Some(black.token.clone()));
+    assert_eq!(
+        black_back.next("state")["history"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    black_back.mv("b8", "c6");
+    let live = back.last("state");
+    assert!(live.get("history").is_none());
+    assert_eq!(live["ply"], 4);
+    drop(black);
+}
+
+#[tokio::test]
 async fn a_second_connection_replaces_the_first() {
     let (app, _) = new_app(HubConfig::default());
     let mut first = Client::connect(&app, None);

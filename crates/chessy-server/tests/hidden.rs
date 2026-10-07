@@ -248,3 +248,36 @@ async fn a_hidden_piece_that_does_not_check_stays_hidden() {
     let state = black.last("state");
     assert!(state["board"][sq("d1") as usize].is_null());
 }
+
+#[tokio::test]
+async fn the_history_sent_on_resume_keeps_secrets_secret() {
+    let (app, store) = new_app(HubConfig::default());
+    let (mut white, mut black) = start(&app, &store, &[SkillId::Trap], &[SkillId::Trap]);
+    skill(
+        &white,
+        SkillId::Trap,
+        SkillTarget::Square { square: sq("e5") },
+    );
+    white.clear();
+    black.clear();
+
+    // The trapper still sees their own trap in the history ...
+    app.disconnect(&white.id, white.conn);
+    let mut white_back = Client::connect(&app, Some(white.token.clone()));
+    let mine = white_back.next("state");
+    let entry = &mine["history"][0];
+    assert!(entry["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["type"] == "trap_set"));
+
+    // ... the victim learns that a skill was used, not where, and sees no trap.
+    app.disconnect(&black.id, black.conn);
+    let mut black_back = Client::connect(&app, Some(black.token.clone()));
+    let theirs = black_back.next("state");
+    let events = theirs["history"][0]["events"].as_array().unwrap().clone();
+    assert!(events.iter().all(|e| e["type"] != "trap_set"), "{events:?}");
+    let used = events.iter().find(|e| e["type"] == "skill_used").unwrap();
+    assert_eq!(used["target"], json!({"kind": "none"}));
+}

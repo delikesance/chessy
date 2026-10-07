@@ -166,6 +166,17 @@ export interface OpponentInfo {
   bot?: boolean;
 }
 
+/** Une action déjà jouée, telle que ce joueur l'a vue (voir `StateView.history`). */
+export interface HistoryEntry {
+  /** `ply` de la position obtenue. */
+  ply: number;
+  /** Camp au trait après l'action. */
+  to_move: Color;
+  events: GameEvent[];
+  /** Où se trouvent, après l'action, les pièces des événements `moved`. */
+  landed: { square: Square; kind: PieceKind }[];
+}
+
 export interface StateView {
   game_id: string;
   clock: Clock;
@@ -195,6 +206,11 @@ export interface StateView {
   opponent_connected: boolean;
   /** Nombre de spectateurs courant (v4) ; absent = serveur ancien. */
   spectators?: number;
+  /**
+   * Toutes les actions déjà jouées, de la plus ancienne à la plus récente. Envoyé seulement quand le
+   * joueur rejoint sa partie (rechargement de la page, reconnexion) ; absent des états en direct.
+   */
+  history?: HistoryEntry[];
 }
 
 export interface RewardOffer {

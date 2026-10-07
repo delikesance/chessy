@@ -7,12 +7,13 @@ import {
   evalShare,
   formatClock,
   launchOf,
+  logFromHistory,
   materialBalance,
   remainingMs,
   sqName,
   turnsLeft,
 } from "./logic";
-import type { GameEvent, Piece, PieceKind, StateView } from "../protocol";
+import type { GameEvent, HistoryEntry, Piece, PieceKind, StateView } from "../protocol";
 
 let nextId = 0;
 const p = (kind: PieceKind, color: "white" | "black"): Piece => ({ id: nextId++, kind, color });
@@ -208,5 +209,40 @@ describe("v3 journal and bookkeeping", () => {
     const benched = [{ id: 4, kind: "rook" as const, color: "white" as const }];
     expect(materialBalance(b, "white", benched)).toBe(5);
     expect(capturedPieces(boardWith(...fullSide("white").slice(0, 15)), "white", benched)).not.toContain("rook");
+  });
+});
+
+describe("journal restored after a page reload", () => {
+  const history: HistoryEntry[] = [
+    { ply: 1, to_move: "black", events: [{ type: "moved", from: 12, to: 28, piece: 1 }], landed: [{ square: 28, kind: "pawn" }] },
+    {
+      ply: 2,
+      to_move: "white",
+      events: [{ type: "skill_used", color: "black", skill: "mind", target: { kind: "none" } }, { type: "best_move", from: 12, to: 28 }],
+      landed: [],
+    },
+    { ply: 2, to_move: "white", events: [], landed: [] },
+    { ply: 3, to_move: "black", events: [{ type: "moved", from: 6, to: 21, piece: 2 }], landed: [{ square: 21, kind: "knight" }] },
+  ];
+
+  it("rebuilds one line per action from the server history", () => {
+    const log = logFromHistory(history);
+    expect(log.map((l) => [l.ply, l.actor, l.kind, l.text])).toEqual([
+      [1, "white", "move", "Pion e2–e4"],
+      [2, "black", "skill", "Mind Reading · meilleur coup e2–e4"],
+      [3, "white", "move", "Cavalier g1–f3"],
+    ]);
+  });
+
+  it("keeps lines that share a ply apart (the turn-keeping skills) and lets live lines follow", () => {
+    const log = logFromHistory([history[1], { ...history[1], ply: 2 }]);
+    expect(new Set(log.map((l) => l.key)).size).toBe(2);
+    const live = { ply: 4, actor: "black" as const, kind: "move" as const, text: "Pion e7–e5", key: "live" };
+    expect(appendLog(logFromHistory(history), live)).toHaveLength(4);
+  });
+
+  it("caps the journal like the live one", () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ ...history[0], ply: i + 1 }));
+    expect(logFromHistory(many, 3).map((l) => l.ply)).toEqual([3, 4, 5]);
   });
 });
