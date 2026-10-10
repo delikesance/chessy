@@ -30,7 +30,7 @@ Une compétence unique ne peut être disponible que dans un seul deck (global). 
 
 ## Compétences classiques
 
-- **Teleportation** — Déplace une pièce vers n'importe quelle case de l'échiquier, sans tenir compte des obstacles.
+- **Teleportation** — Déplace une de vos pièces (pas le roi) vers n'importe quelle case vide de l'échiquier, sans tenir compte des obstacles.
 - **Imune** — Rend une pièce invulnérable aux attaques ennemies pour un tour.
 - **Rollback** — Rollback le mouvement réel d'une pièce. Pas sur le roi.
 - **Clone** — Crée une copie d'une pièce sur une case vide adjacente. Possible uniquement si la cible dispose d'une case adjacente vide.

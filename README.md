@@ -19,7 +19,7 @@ Les règles des compétences sont décrites dans [docs/skills.md](docs/skills.md
 - **Jouer sur téléphone** : plateau pleine largeur (cases de ~44 px) avec compétences et actions sous la main, mise en page dédiée au paysage (plateau fixe à gauche, panneaux à droite), journal et chat repliables, fenêtres de promotion / résultat plein écran, zone de toucher élargie sur le cadre et seuil de glisser adapté au doigt.
 - **Parties en direct** : onglet « En direct » pour regarder les parties en cours (contre l'IA ou entre joueurs, avec 30 s de décalage pour les duels) ; informations cachées (pièces invisibles, pièges) jamais révélées.
 - **Collection** : l'historique de vos compétences, obtenues, forgées ou perdues (d'où elles viennent, à qui vous les avez prises, qui vous les a prises).
-- **La forge** : en choisissant une compétence aléatoire après une victoire classée, on reçoit une compétence **inventée** (nom, description, icône, son et rareté déduits de sa définition). Toutes sont uniques à la naissance, mais une combinaison qui en répète une autre devient Commune ; seules celles qui bouleversent une partie sont Légendaires. Spécification dans [docs/spec-forge.md](docs/spec-forge.md).
+- **La forge** : en choisissant une compétence aléatoire après une victoire classée, on reçoit une compétence **inventée** (nom, description, icône, son et rareté déduits de sa définition). Chacune est inédite à sa naissance, mais une combinaison qui en répète une autre devient Commune ; seules celles qui bouleversent une partie sont Légendaires, et uniques au monde. Spécification dans [docs/spec-forge.md](docs/spec-forge.md).
 - **Replays et analyse** : toutes les parties sont enregistrées (« Mes parties ») ; replay pas à pas, analyse du moteur (précision, étiquettes meilleur/erreur/gaffe, meilleur coup en flèche) et exploration de variantes ; spécification dans [docs/spec-v4.md](docs/spec-v4.md).
 - **Design « Jade »** : coins coupés, accent jade, titres condensés, en clair ou en sombre (suit le système, réglable dans Réglages) ; écran Jouer avec onglets de mode (Classée, Amicale, Salle privée, Contre l’IA), groupe, deck et amis en ligne autour d’une pièce éclairée.
 
@@ -108,9 +108,9 @@ Le cahier des charges ne tranche pas tout ; voici les choix faits (faciles à ch
 - **Seules les parties classées** (file classée entre deux comptes, au moins 4 plies, pas plus de 3 parties classées
   contre le même adversaire en une heure) donnent une récompense de compétence : ni les parties amicales (invités,
   salles, défis, Solo) ni un abandon à zéro coup n'en donnent, ce qui évite de « farmer » des compétences.
-- Récompense « aléatoire » : le gagnant reçoit une compétence tirée au hasard dans le pool global
-  (classiques qu'il n'a pas + uniques sans propriétaire) et le perdant en perd une au hasard parmi celles qu'il
-  possédait à la fin de la partie. Une récompense non réclamée ne peut pas voler une compétence acquise par le
+- Après une victoire classée, le gagnant choisit : **Voler** (il prend la compétence de son choix au perdant),
+  **Forger** (il reçoit une compétence forgée, rareté visée tirée à 55/25/13/6/1 %, et le perdant en perd une au
+  hasard parmi celles qu'il possédait à la fin de la partie) ou **Passer** (personne ne gagne ni ne perd). Une récompense non réclamée ne peut pas voler une compétence acquise par le
   perdant après la partie, ni une qu'il a perdue entre-temps ; elle expire au bout de 6 h.
 - Sécurité : une déconnexion (`/api/auth/logout`) ferme aussi la WebSocket ouverte avec cette session ; chaque
   connexion a un quota de messages (rafale de 40, 20 par seconde, une recherche d'utilisateur ou une demande d'ami

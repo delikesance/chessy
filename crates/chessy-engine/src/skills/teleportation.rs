@@ -1,8 +1,9 @@
 use super::{Skill, SkillId, SkillTarget};
 use crate::position::Position;
-use crate::types::{Color, Event};
+use crate::types::{Color, Event, PieceKind};
 
-/// Moves one of your pieces to any empty square, ignoring obstacles.
+/// Moves one of your pieces (not the king) to any empty square, ignoring
+/// obstacles.
 pub struct Teleportation;
 
 impl Skill for Teleportation {
@@ -13,7 +14,7 @@ impl Skill for Teleportation {
     fn targets(&self, pos: &Position, color: Color) -> Vec<SkillTarget> {
         let mut out = Vec::new();
         for (from, piece) in pos.pieces(color) {
-            if pos.is_frozen(piece.id) {
+            if piece.kind == PieceKind::King || pos.is_frozen(piece.id) {
                 continue;
             }
             for to in 0..64u8 {

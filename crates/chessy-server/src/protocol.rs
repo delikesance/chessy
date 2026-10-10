@@ -108,7 +108,8 @@ pub enum RewardChoice {
         skill: SkillId,
         replace: Option<SkillId>,
     },
-    /// Roll a random skill from the global pool; the loser loses a random one.
+    /// Forge a new skill (target rarity rolled 55/25/13/6/1); the loser loses
+    /// one of their end-of-game skills at random.
     Random {
         replace: Option<SkillId>,
     },
